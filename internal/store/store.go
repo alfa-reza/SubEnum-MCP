@@ -434,6 +434,16 @@ func (r *Run) loadFile() error {
 
 // Upsert merges rec into the run by host, appending a full snapshot line for
 // audit (later lines win when reloading).
+// CheckMode rejects incompatible or legacy mixed runs before a backend runs.
+func (r *Run) CheckMode(fixture bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if (r.fixtureSeen && r.liveSeen) || (fixture && r.liveSeen) || (!fixture && r.fixtureSeen) {
+		return fmt.Errorf("run %s contains observations from a different mode; start a new run", r.ID)
+	}
+	return nil
+}
+
 func (r *Run) Upsert(rec *model.Record) (*model.Record, error) {
 	if rec == nil || rec.Host == "" {
 		return nil, fmt.Errorf("record must have a host")

@@ -35,6 +35,8 @@ type BruteforceOut struct {
 }
 
 func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in BruteforceIn) (result *mcp.CallToolResult, output BruteforceOut, retErr error) {
+	a.operationMu.Lock()
+	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {
 		return nil, BruteforceOut{}, err
 	}
@@ -78,6 +80,9 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, BruteforceOut{}, err
 	}
+	if err := run.CheckMode(!a.cfg.External.Requested); err != nil {
+		return nil, BruteforceOut{}, err
+	}
 	mode, fixture := fixtureMode, true
 	backendInfo := a.fixtureBackendInfo("mock.dnsx", backend.KindBruteforce)
 	var records []*model.Record
@@ -115,25 +120,33 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 
 type ResolveIn struct {
 	RunID          string   `json:"run_id,omitempty" jsonschema:"run to append to; empty uses the latest run"`
-	Hosts          []string `json:"hosts,omitempty" jsonschema:"up to 2000 input hostnames; empty resolves the hosts already stored in the run"`
+	Hosts          []string `json:"hosts,omitempty" jsonschema:"up to 2000 input hostnames; empty resolves hosts already stored in the run"`
 	MaxHosts       *int     `json:"max_hosts,omitempty" jsonschema:"optional positive cap on in-scope hosts resolved per call, 1–2000"`
+	HostOffset     *int     `json:"host_offset,omitempty" jsonschema:"0-based offset over stored in-scope hosts when hosts is omitted; minimum 0"`
+	HostLimit      *int     `json:"host_limit,omitempty" jsonschema:"batch size over stored in-scope hosts when hosts is omitted, 1–2000; defaults to max_hosts"`
 	TimeoutSeconds *int     `json:"timeout_seconds,omitempty" jsonschema:"0 or omitted uses the 120-second default; otherwise 1–300 seconds"`
 }
 
 type ResolveOut struct {
-	RunID        string          `json:"run_id" jsonschema:"run identifier receiving the results"`
-	Root         string          `json:"root" jsonschema:"configured scope root"`
-	Mode         string          `json:"mode" jsonschema:"fixture or explicitly enabled external mode"`
-	Fixture      bool            `json:"fixture" jsonschema:"whether outputs are synthetic fixture data"`
-	Requested    int             `json:"requested" jsonschema:"number of hostnames supplied or loaded from the run"`
-	Accepted     int             `json:"accepted" jsonschema:"unique in-scope subdomains sent to a resolver"`
-	Dropped      []DroppedInput  `json:"dropped" jsonschema:"out-of-scope or malformed inputs rejected before any backend call"`
-	StatusCounts map[string]int  `json:"status_counts" jsonschema:"accepted result counts grouped by DNS status"`
-	Records      []*model.Record `json:"records" jsonschema:"stored in-scope resolution records"`
-	Backend      backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
+	RunID          string          `json:"run_id" jsonschema:"run identifier receiving the results"`
+	Root           string          `json:"root" jsonschema:"configured scope root"`
+	Mode           string          `json:"mode" jsonschema:"fixture or explicitly enabled external mode"`
+	Fixture        bool            `json:"fixture" jsonschema:"whether outputs are synthetic fixture data"`
+	Requested      int             `json:"requested" jsonschema:"number of hostnames supplied or selected from the run for this call"`
+	Accepted       int             `json:"accepted" jsonschema:"unique in-scope subdomains sent to a resolver"`
+	Dropped        []DroppedInput  `json:"dropped" jsonschema:"out-of-scope or malformed inputs rejected before any backend call"`
+	StatusCounts   map[string]int  `json:"status_counts" jsonschema:"accepted result counts grouped by DNS status"`
+	Records        []*model.Record `json:"records" jsonschema:"stored in-scope resolution records"`
+	Backend        backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
+	HostTotal      int             `json:"host_total,omitempty" jsonschema:"total stored in-scope hosts in the run when hosts is omitted"`
+	HostOffset     int             `json:"host_offset,omitempty" jsonschema:"offset used over stored in-scope hosts when hosts is omitted"`
+	HostBatch      int             `json:"host_batch,omitempty" jsonschema:"stored in-scope hosts selected for this call when hosts is omitted"`
+	HostNextOffset *int            `json:"host_next_offset,omitempty" jsonschema:"next offset over stored in-scope hosts, or null when no hosts remain"`
 }
 
 func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in ResolveIn) (*mcp.CallToolResult, ResolveOut, error) {
+	a.operationMu.Lock()
+	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {
 		return nil, ResolveOut{}, err
 	}
@@ -161,10 +174,40 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 		if err != nil {
 			return nil, ResolveOut{}, err
 		}
-		hosts = hostnames(run.InScope(""))
+		hostOffset := 0
+		if in.HostOffset != nil {
+			if *in.HostOffset < 0 {
+				return nil, ResolveOut{}, fmt.Errorf("host_offset must be 0 or greater; got %d", *in.HostOffset)
+			}
+			hostOffset = *in.HostOffset
+		}
+		hostLimit := maxHosts
+		if in.HostLimit != nil {
+			if *in.HostLimit <= 0 || *in.HostLimit > CapMaxResolveHosts {
+				return nil, ResolveOut{}, fmt.Errorf("host_limit must be between 1 and %d; got %d", CapMaxResolveHosts, *in.HostLimit)
+			}
+			hostLimit = *in.HostLimit
+		}
+		allHosts := hostnames(run.InScope(""))
+		out.HostTotal = len(allHosts)
+		out.HostOffset = hostOffset
+		if hostOffset > len(allHosts) {
+			hostOffset = len(allHosts)
+			out.HostOffset = hostOffset
+		}
+		end := hostOffset + hostLimit
+		if end > len(allHosts) {
+			end = len(allHosts)
+		}
+		hosts = allHosts[hostOffset:end]
+		out.HostBatch = len(hosts)
+		if end < len(allHosts) {
+			next := end
+			out.HostNextOffset = &next
+		}
 		out.Requested = len(hosts)
 		if len(hosts) > maxHosts {
-			return nil, ResolveOut{}, fmt.Errorf("run %s holds %d in-scope hosts; resolve_hosts is capped at %d per call; paginate work by starting a new run or lowering the stored set", run.ID, len(hosts), maxHosts)
+			return nil, ResolveOut{}, fmt.Errorf("%d stored hosts selected exceeds max_hosts cap of %d; lower host_limit/max_hosts", len(hosts), maxHosts)
 		}
 	} else {
 		out.Requested = len(in.Hosts)
@@ -203,6 +246,9 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 		}
 	}
 	out.RunID = run.ID
+	if err := run.CheckMode(!a.cfg.External.Requested); err != nil {
+		return nil, ResolveOut{}, err
+	}
 	out.Accepted = len(hosts)
 
 	if len(hosts) > 0 {

@@ -34,6 +34,26 @@ func rec(runID, host, status string, inScope bool, dropReason string) *model.Rec
 	}
 }
 
+func TestCheckModeBeforeWriting(t *testing.T) {
+	s := newTestStore(t)
+	run, err := s.CreateRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run.CheckMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run.Upsert(rec(run.ID, "api.example.com", "candidate", true, "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.CheckMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.CheckMode(false); err == nil {
+		t.Fatal("external mode accepted fixture run")
+	}
+}
+
 func TestOpen_CreatesManagedDirs(t *testing.T) {
 	s := newTestStore(t)
 	for _, sub := range []string{"runs", "exports", "work"} {

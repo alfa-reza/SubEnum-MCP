@@ -16,6 +16,29 @@ import (
 
 const testRoot = "corp.customer-example.net"
 
+func TestDNSXRequiresValidPositiveAnswer(t *testing.T) {
+	sc, err := scope.New(testRoot, scope.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		row     string
+		count   int
+		invalid bool
+	}{
+		{`{"host":"api.` + testRoot + `"}`, 0, false},
+		{`{"host":"api.` + testRoot + `","a":["192.0.2.1"]}`, 1, false},
+		{`{"host":"api.` + testRoot + `","a":["not-an-ip"]}`, 0, true},
+		{`{"host":"api.` + testRoot + `","aaaa":["192.0.2.1"]}`, 0, true},
+		{`{"host":"api.` + testRoot + `","cname":["bad name"]}`, 0, true},
+	} {
+		got, err := parseDNSXRecords([]byte(tc.row), sc)
+		if (err != nil) != tc.invalid || len(got) != tc.count {
+			t.Errorf("%s: got %v, %v", tc.row, got, err)
+		}
+	}
+}
+
 func testExternal(t *testing.T, fn func(ExecSpec) ([]byte, []byte, error)) (*ExternalBackends, *FakeRunner) {
 	t.Helper()
 	sc, err := scope.New(testRoot, scope.DefaultPolicy())

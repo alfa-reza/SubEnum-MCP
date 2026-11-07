@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -407,7 +408,13 @@ func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]m
 		}
 		for typ, vals := range map[string][]string{"A": result.A, "AAAA": result.AAAA, "CNAME": result.CNAME} {
 			for _, value := range vals {
-				if len(value) > 253 || strings.ContainsAny(value, "\r\n\t") {
+				valid := false
+				if typ == "CNAME" {
+					valid = scope.ValidateHostname(strings.TrimSuffix(value, "."), scope.DefaultPolicy()) == nil
+				} else if addr, err := netip.ParseAddr(value); err == nil {
+					valid = (typ == "A" && addr.Is4()) || (typ == "AAAA" && addr.Is6() && !addr.Is4In6())
+				}
+				if !valid {
 					return nil, fmt.Errorf("dnsx output line %d contains invalid %s value", line, typ)
 				}
 			}
@@ -415,7 +422,9 @@ func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]m
 				records[typ] = model.UnionStrings(records[typ], vals)
 			}
 		}
-		out[classified.Normalized] = records
+		if len(records) > 0 {
+			out[classified.Normalized] = records
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read dnsx output: %w", err)

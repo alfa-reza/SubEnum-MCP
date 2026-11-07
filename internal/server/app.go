@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
@@ -23,6 +24,7 @@ var presetWordlists = map[string]string{
 }
 
 type App struct {
+	operationMu        sync.Mutex
 	cfg                *Config
 	scope              *scope.Scope
 	store              *store.Store
