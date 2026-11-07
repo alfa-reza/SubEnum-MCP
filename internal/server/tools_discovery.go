@@ -45,8 +45,8 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 	if err != nil {
 		return nil, DiscoverOut{}, err
 	}
-	if a.cfg.External.Requested {
-		if err := a.requireExternal(true); err != nil {
+	if !a.fixtureMode() {
+		if err := a.verifyRealBackends(); err != nil {
 			return nil, DiscoverOut{}, err
 		}
 	}
@@ -54,18 +54,11 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 	if err != nil {
 		return nil, DiscoverOut{}, err
 	}
-	if err := run.CheckMode(!a.cfg.External.Requested); err != nil {
-		return nil, DiscoverOut{}, err
-	}
-	mode, fixture := fixtureMode, true
-	backendInfo := a.fixtureBackendInfo("mock.subfinder", backend.KindPassive)
 	var records []*model.Record
-	if a.cfg.External.Requested {
-		records, err = a.external.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout})
-		mode, fixture = externalMode, false
-		backendInfo = a.externalBackendInfo("subfinder", backend.KindPassive)
-	} else {
+	if a.fixtureMode() {
 		records, err = a.disc.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout})
+	} else {
+		records, err = a.external.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout})
 	}
 	if err != nil {
 		return nil, DiscoverOut{}, err
@@ -74,14 +67,18 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 	if err != nil {
 		return nil, DiscoverOut{}, err
 	}
+	mode := "real"
+	if a.fixtureMode() {
+		mode = "fixture"
+	}
 	return nil, DiscoverOut{
 		RunID:   run.ID,
 		Root:    a.Root(),
 		Mode:    mode,
-		Fixture: fixture,
+		Fixture: a.fixtureMode(),
 		Count:   len(stored),
 		Records: sampleRecords(stored),
-		Backend: backendInfo,
+		Backend: a.backendInfo("subfinder", backend.KindPassive),
 	}, nil
 }
 
@@ -130,9 +127,6 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 	if err != nil {
 		return nil, GenerateOut{}, err
 	}
-	if err := run.CheckMode(!a.cfg.External.Requested); err != nil {
-		return nil, GenerateOut{}, err
-	}
 	seedOffset := 0
 	if in.SeedOffset != nil {
 		if *in.SeedOffset < 0 {
@@ -159,21 +153,23 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		end = len(allSeeds)
 	}
 	seeds := allSeeds[seedOffset:end]
-	if len(seeds) == 0 {
-		return nil, GenerateOut{RunID: run.ID, Root: a.Root(), Mode: fixtureMode, Fixture: true, SeedTotal: len(allSeeds), SeedOffset: seedOffset, Records: []*model.Record{}, Backend: a.fixtureBackendInfo("mock.alterx", backend.KindCandidates)}, nil
+	mode := "real"
+	if a.fixtureMode() {
+		mode = "fixture"
 	}
-	mode, fixture := fixtureMode, true
-	backendInfo := a.fixtureBackendInfo("mock.alterx", backend.KindCandidates)
-	var records []*model.Record
-	if a.cfg.External.Requested {
-		if err := a.requireExternal(false); err != nil {
+	if len(seeds) == 0 {
+		return nil, GenerateOut{RunID: run.ID, Root: a.Root(), Mode: mode, Fixture: a.fixtureMode(), SeedTotal: len(allSeeds), SeedOffset: seedOffset, Records: []*model.Record{}, Backend: a.backendInfo("alterx", backend.KindCandidates)}, nil
+	}
+	if !a.fixtureMode() {
+		if err := a.verifyRealBackends(); err != nil {
 			return nil, GenerateOut{}, err
 		}
-		records, err = a.external.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout})
-		mode, fixture = externalMode, false
-		backendInfo = a.externalBackendInfo("alterx", backend.KindCandidates)
-	} else {
+	}
+	var records []*model.Record
+	if a.fixtureMode() {
 		records, err = a.gen.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout})
+	} else {
+		records, err = a.external.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout})
 	}
 	if err != nil {
 		return nil, GenerateOut{}, err
@@ -191,11 +187,11 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		RunID:          run.ID,
 		Root:           a.Root(),
 		Mode:           mode,
-		Fixture:        fixture,
+		Fixture:        a.fixtureMode(),
 		Seeds:          len(seeds),
 		Generated:      len(stored),
 		Records:        sampleRecords(stored),
-		Backend:        backendInfo,
+		Backend:        a.backendInfo("alterx", backend.KindCandidates),
 		SeedTotal:      len(allSeeds),
 		SeedOffset:     seedOffset,
 		SeedNextOffset: next,

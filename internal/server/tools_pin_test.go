@@ -1,9 +1,30 @@
 package server
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestDefaultDataDirectoriesAreIsolatedByScope(t *testing.T) {
+	base := t.TempDir()
+	for _, root := range []string{"example.com", "example.org", "example.com"} {
+		cfg := &Config{ScopeRoot: root, DataDir: base, ScopeDataDir: true, Fixture: true}
+		app, err := NewApp(cfg, testLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.DataDir() != filepath.Join(base, root) {
+			t.Fatalf("unexpected data directory %q", app.DataDir())
+		}
+		if _, err := app.Store().CreateRun(); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func emptyRootConfig(t *testing.T) *Config {
 	return testConfig(t, func(c *Config) { c.ScopeRoot = "" })
@@ -68,11 +89,11 @@ func TestDoctorAndListBackendsBeforePin(t *testing.T) {
 	if listed.ScopeRoot != "" {
 		t.Fatalf("scope_root = %q before pinning, want empty", listed.ScopeRoot)
 	}
-	if listed.External.State != GateDisabled {
-		t.Fatalf("external gate = %q before pinning, want %q", listed.External.State, GateDisabled)
+	if listed.Pinned {
+		t.Fatal("server should not be pinned before start_run")
 	}
-	if !strings.Contains(strings.Join(listed.External.Reasons, "; "), "start_run") {
-		t.Fatalf("external gate reasons before pinning = %v, want the start_run instruction", listed.External.Reasons)
+	if !listed.Fixture {
+		t.Fatal("test config should report fixture mode")
 	}
 
 	var doc DoctorOut
@@ -89,8 +110,6 @@ func TestDoctorAndListBackendsBeforePin(t *testing.T) {
 	if scopeCheck.State != CheckWarn {
 		t.Fatalf("scope_root state = %q before pinning, want %q", scopeCheck.State, CheckWarn)
 	}
-
-	// Doctor must not report failure for an un-pinned, fixture-default server.
 	if !doc.OK {
 		t.Fatalf("doctor OK = false before pinning: %+v", doc.Checks)
 	}

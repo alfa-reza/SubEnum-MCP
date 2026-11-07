@@ -40,14 +40,13 @@ func main() {
 	logger.Info("subenum-mcp starting",
 		"scope_root", root,
 		"data_dir", app.DataDir(),
-		"mode", "fixture-by-default",
-		"external", "requires explicit enable, matching authorization, pinned binaries, and separate live opt-in for network tools",
+		"version", serverVersion,
 	)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "subenum-mcp", Version: serverVersion}, &mcp.ServerOptions{
 		Instructions: `subenum-mcp enumerates subdomain NAMES for exactly one registrable-domain scope per server process. ` +
 			`Call start_run with scope_root as your first tool (for example "bmkg.go.id", only a scope you are authorized to test); the first call pins the process to that root. ` +
-			`Apex is never in scope. Fixture mode is the offline default; external discovery/DNS needs operator authorization plus SUBENUM_EXTERNAL_ENABLE=1 and, for network tools, SUBENUM_LIVE_ENABLE=1. ` +
+			`Apex is never in scope. Real, hash-verified backends (subfinder, alterx, dnsx) run by default and fail with a clear error if binaries are missing or do not match compiled release hashes. ` +
 			`For large resolves pass timeout_seconds (up to 300) and paginate with host_offset/host_limit; the AlterX candidate generator is capped at 5000. ` +
 			`no_answer does not imply NXDOMAIN. No HTTP/TLS probing or exploitation is provided. Stay within the authorized program scope at all times.`,
 	})

@@ -249,15 +249,16 @@ func TestInvalidDNSInputsDoNotCreateRunsOrPersistDrops(t *testing.T) {
 		}
 	})
 
-	t.Run("external bruteforce gate", func(t *testing.T) {
+	t.Run("real bruteforce missing binaries fails before creating a run", func(t *testing.T) {
 		cfg := testConfig(t, func(c *Config) {
 			c.ScopeRoot = "corp.customer-example.net"
-			c.External.Requested = true
+			c.Fixture = false
+			c.Backend.ManagedBinDir = t.TempDir()
 		})
 		session, app := connectInProcess(t, cfg)
 		callToolErr(t, session, "bruteforce_subdomains", map[string]any{"wordlist": "preset-small"})
 		if got := len(app.Store().Runs()); got != 0 {
-			t.Fatalf("refused external bruteforce created %d runs", got)
+			t.Fatalf("failed bruteforce created %d runs", got)
 		}
 	})
 
@@ -288,17 +289,18 @@ func TestInvalidDNSInputsDoNotCreateRunsOrPersistDrops(t *testing.T) {
 		}
 	})
 
-	t.Run("external gate fails before rejected input persistence", func(t *testing.T) {
+	t.Run("real mode missing binaries fails before rejected input persistence", func(t *testing.T) {
 		cfg := testConfig(t, func(c *Config) {
 			c.ScopeRoot = "corp.customer-example.net"
-			c.External.Requested = true
+			c.Fixture = false
+			c.Backend.ManagedBinDir = t.TempDir()
 		})
 		session, app := connectInProcess(t, cfg)
 		callToolErr(t, session, "resolve_hosts", map[string]any{
 			"hosts": []string{"api.corp.customer-example.net", "evil.test"},
 		})
 		if got := len(app.Store().Runs()); got != 0 {
-			t.Fatalf("failed external gate created %d runs or persisted rejected inputs", got)
+			t.Fatalf("failed real backend check created %d runs or persisted rejected inputs", got)
 		}
 	})
 }
@@ -312,15 +314,16 @@ func TestPipelineFailuresDoNotCreateRuns(t *testing.T) {
 		}
 	})
 
-	t.Run("external discovery gate", func(t *testing.T) {
+	t.Run("real discovery missing binaries fails before creating a run", func(t *testing.T) {
 		cfg := testConfig(t, func(c *Config) {
 			c.ScopeRoot = "corp.customer-example.net"
-			c.External.Requested = true
+			c.Fixture = false
+			c.Backend.ManagedBinDir = t.TempDir()
 		})
 		session, app := connectInProcess(t, cfg)
 		callToolErr(t, session, "discover_subdomains", map[string]any{})
 		if got := len(app.Store().Runs()); got != 0 {
-			t.Fatalf("refused external discovery created %d runs", got)
+			t.Fatalf("failed discovery created %d runs", got)
 		}
 	})
 

@@ -180,25 +180,22 @@ func TestToolSchemasReflectHandlerBoundsAndEnums(t *testing.T) {
 	}
 }
 
-func TestExternalBruteforceUsesManagedTemporaryWordlist(t *testing.T) {
-	authDir := t.TempDir()
-	authFile := filepath.Join(authDir, "authorization.json")
-	auth := `{"authorized":true,"operator":"secops","scope_root":"corp.customer-example.net","acknowledgement":"approved for this scope"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
+func TestRealBruteforceUsesManagedTemporaryWordlist(t *testing.T) {
+	dir := t.TempDir()
+	bins := map[string]string{}
+	for _, name := range []string{"subfinder", "dnsx", "alterx"} {
+		bins[name] = filepath.Join(dir, name)
 	}
 	cfg := testConfig(t, func(c *Config) {
 		c.ScopeRoot = "corp.customer-example.net"
-		c.External.Requested = true
-		c.External.LiveEnabled = true
-		c.External.AuthFile = authFile
-		c.External.SubfinderBin = "/pinned/subfinder"
-		c.External.DnsxBin = "/pinned/dnsx"
-		c.External.AlterxBin = "/pinned/alterx"
+		c.Fixture = false
+		c.Backend.SubfinderBin = bins["subfinder"]
+		c.Backend.DnsxBin = bins["dnsx"]
+		c.Backend.AlterxBin = bins["alterx"]
 	})
 	session, app := connectInProcess(t, cfg)
 	app.verifyPinnedBinary = func(name, path string) (adapters.PinnedTool, string, error) {
-		return adapters.PinnedTool{}, "offline stub", nil
+		return adapters.PinnedTool{Name: name, Version: "test-pin", License: "MIT", Platform: "linux/amd64"}, "test-digest", nil
 	}
 
 	var wordlistPath string
@@ -229,7 +226,7 @@ func TestExternalBruteforceUsesManagedTemporaryWordlist(t *testing.T) {
 		if string(data) != want {
 			return nil, nil, fmt.Errorf("managed wordlist contents = %q, want %q", data, want)
 		}
-		return []byte("{\"host\":\"api.corp.customer-example.net\"}\n"), nil, nil
+		return []byte("{\"host\":\"api.corp.customer-example.net\",\"a\":[\"192.0.2.1\"]}\n"), nil, nil
 	}}
 	ext, err := adapters.NewExternalBackends(app.scope, app.builder, fake)
 	if err != nil {

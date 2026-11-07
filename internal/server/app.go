@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
 	"github.com/alfa-reza/SubEnum-MCP/internal/assets"
@@ -31,6 +29,7 @@ type App struct {
 	cfg                *Config
 	pinMu              sync.RWMutex
 	pinned             bool
+	fixture            bool
 	scope              *scope.Scope
 	store              *store.Store
 	mock               *mock.Source
@@ -65,27 +64,62 @@ func (a *App) binPaths() []struct{ name, path string } {
 		if strings.TrimSpace(configured) != "" {
 			return configured
 		}
-		p := filepath.Join(a.cfg.External.ManagedBinDir, name)
+		p := filepath.Join(a.cfg.Backend.ManagedBinDir, name)
 		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
 			return p
 		}
 		return ""
 	}
 	return []struct{ name, path string }{
-		{name: "subfinder", path: resolve("subfinder", a.cfg.External.SubfinderBin)},
-		{name: "dnsx", path: resolve("dnsx", a.cfg.External.DnsxBin)},
-		{name: "alterx", path: resolve("alterx", a.cfg.External.AlterxBin)},
+		{name: "subfinder", path: resolve("subfinder", a.cfg.Backend.SubfinderBin)},
+		{name: "dnsx", path: resolve("dnsx", a.cfg.Backend.DnsxBin)},
+		{name: "alterx", path: resolve("alterx", a.cfg.Backend.AlterxBin)},
 	}
 }
 
 // builderPath returns the path to hand to the command builder: an explicit
-// env override wins, otherwise the managed path (verification happens at the
-// gate, before any execution).
+// env override wins, otherwise the managed path. Binary integrity is
+// verified before any execution.
 func (a *App) builderPath(name, configured string) string {
 	if strings.TrimSpace(configured) != "" {
 		return configured
 	}
-	return filepath.Join(a.cfg.External.ManagedBinDir, name)
+	return filepath.Join(a.cfg.Backend.ManagedBinDir, name)
+}
+
+func (a *App) fixtureMode() bool {
+	a.pinMu.RLock()
+	defer a.pinMu.RUnlock()
+	if a.pinned {
+		return a.fixture
+	}
+	return a.cfg.Fixture
+}
+
+// verifyRealBackends checks that every pinned backend binary is present and
+// matches its compiled release hash. It does not execute binaries or touch the
+// network.
+func (a *App) verifyRealBackends() error {
+	paths := a.binPaths()
+	missing := make([]string, 0, len(paths))
+	for _, item := range paths {
+		if strings.TrimSpace(item.path) == "" {
+			missing = append(missing, item.name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("required backend binary not found: %s; install the hash-pinned releases into %s or set %s, %s and %s", strings.Join(missing, ", "), a.cfg.Backend.ManagedBinDir, EnvSubfinderBin, EnvDnsxBin, EnvAlterxBin)
+	}
+	var bad []string
+	for _, item := range paths {
+		if _, _, err := a.verifyPinnedBinary(item.name, item.path); err != nil {
+			bad = append(bad, err.Error())
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("backend binary verification failed: %s", strings.Join(bad, "; "))
+	}
+	return nil
 }
 
 // errNotPinned is returned by every tool that needs a scope before the
@@ -101,14 +135,14 @@ func (a *App) ensurePinned() error {
 
 // pinScope validates root and binds this process to it. An already-pinned
 // process accepts a repeat call with the same root and rejects any change.
-func (a *App) pinScope(root string) error {
+// When fixture is true, the server uses in-process, clearly labeled test
+// backends and may accept reserved placeholder roots.
+func (a *App) pinScope(root string, fixture bool) error {
 	trimmed := strings.TrimSpace(root)
 	if trimmed == "" {
 		a.pinMu.RLock()
 		if a.pinned {
 			a.pinMu.RUnlock()
-			// Already pinned (for example via SUBENUM_SCOPE_ROOT): a bare
-			// call to start_run reuses the existing pin.
 			return nil
 		}
 		a.pinMu.RUnlock()
@@ -127,16 +161,23 @@ func (a *App) pinScope(root string) error {
 	if err != nil {
 		return fmt.Errorf("invalid scope_root %q: %w", trimmed, err)
 	}
-	st, err := store.Open(a.cfg.DataDir, sc.Root())
+	if !fixture && scope.IsReservedPlaceholder(sc.Root()) {
+		return fmt.Errorf("scope root %q is a reserved placeholder name; real enumeration refuses placeholders such as %s (use fixture mode only for explicit, labeled tests)", sc.Root(), DefaultRoot)
+	}
+	dataDir := a.cfg.DataDir
+	if a.cfg.ScopeDataDir {
+		dataDir = filepath.Join(dataDir, sc.Root())
+	}
+	st, err := store.Open(dataDir, sc.Root())
 	if err != nil {
 		return err
 	}
 	src := mock.New(sc.Root())
 	builder := adapters.NewBuilder(sc.Root(),
-		a.builderPath("subfinder", a.cfg.External.SubfinderBin),
-		a.builderPath("dnsx", a.cfg.External.DnsxBin),
-		a.builderPath("alterx", a.cfg.External.AlterxBin),
-	).WithDnsxResolvers(a.cfg.External.DnsxResolvers)
+		a.builderPath("subfinder", a.cfg.Backend.SubfinderBin),
+		a.builderPath("dnsx", a.cfg.Backend.DnsxBin),
+		a.builderPath("alterx", a.cfg.Backend.AlterxBin),
+	).WithDnsxResolvers(a.cfg.Backend.DnsxResolvers)
 	external, err := adapters.NewExternalBackends(sc, builder, a.runner)
 	if err != nil {
 		_ = st.Close()
@@ -151,6 +192,7 @@ func (a *App) pinScope(root string) error {
 	a.res = &mock.Resolver{Src: src}
 	a.builder = builder
 	a.external = external
+	a.fixture = fixture
 	a.pinned = true
 	return nil
 }
@@ -163,7 +205,7 @@ func NewApp(cfg *Config, logger *slog.Logger) (*App, error) {
 		verifyPinnedBinary: adapters.VerifyPinnedBinary,
 	}
 	if root := strings.TrimSpace(cfg.ScopeRoot); root != "" {
-		if err := app.pinScope(root); err != nil {
+		if err := app.pinScope(root, cfg.Fixture); err != nil {
 			return nil, fmt.Errorf("invalid %s: %w", EnvScopeRoot, err)
 		}
 	}
@@ -176,7 +218,12 @@ func (a *App) Root() string {
 	root, _ := a.pinnedRoot()
 	return root
 }
-func (a *App) DataDir() string { return a.cfg.DataDir }
+func (a *App) DataDir() string {
+	if root, ok := a.pinnedRoot(); ok && a.cfg.ScopeDataDir {
+		return filepath.Join(a.cfg.DataDir, root)
+	}
+	return a.cfg.DataDir
+}
 
 // Store returns the managed store once pinned, or nil beforehand.
 func (a *App) Store() *store.Store { return a.store }
@@ -221,36 +268,27 @@ func parseExternalHosts(stdout []byte, configuredScope *scope.Scope) ([]string, 
 	return adapters.ParseExternalNames(stdout, configuredScope)
 }
 
-// BackendInfos reports fixture readiness and pinned release state without
-// launching any executable. Network backends remain disabled unless the
-// separate live gate is explicitly enabled.
+// BackendInfos reports backend state. In fixture mode, mock backends are
+// ready and real backends are not used. In real mode, binaries are verified
+// read-only (no execution) and reported honestly.
 func (a *App) BackendInfos() []backend.Info {
-	g := a.externalGate()
-
-	fixtureNote := "offline deterministic fixture backend; runs in-process, no subprocess and no network"
-	extState := backend.StateDisabled
-	extNote := "external mode disabled; fixture backends are the default"
-	if len(g.Reasons) > 0 {
-		extNote = strings.Join(g.Reasons, "; ")
-	}
-	switch g.State {
-	case GateRefused:
-	case GateUnverified:
-		extState = backend.StateUnverified
-	case GateReady:
-		extState = backend.StateReady
-	}
-	infos := []backend.Info{
-		{Name: "mock.subfinder", Kind: backend.KindPassive, State: backend.StateReadyFixture, Notes: fixtureNote},
-		{Name: "mock.alterx", Kind: backend.KindCandidates, State: backend.StateReadyFixture, Notes: fixtureNote},
-		{Name: "mock.dnsx", Kind: backend.KindResolver, State: backend.StateReadyFixture, Notes: fixtureNote},
-	}
-	addExternal := func(name, kind, path string, needsLive bool) {
-		state, note := extState, extNote
-		if needsLive && g.State == GateReady && !g.LiveEnabled {
-			state = backend.StateDisabled
-			note += "; live discovery/DNS is blocked until the separate live opt-in is enabled"
+	if a.fixtureMode() {
+		note := "active: in-process deterministic fixture backend (test mode), no subprocess and no network"
+		return []backend.Info{
+			{Name: "mock.subfinder", Kind: backend.KindPassive, State: backend.StateReadyFixture, Notes: note},
+			{Name: "mock.alterx", Kind: backend.KindCandidates, State: backend.StateReadyFixture, Notes: note},
+			{Name: "mock.dnsx", Kind: backend.KindResolver, State: backend.StateReadyFixture, Notes: note},
+			{Name: "subfinder", Kind: backend.KindPassive, State: backend.StateDisabled, Notes: "not used in fixture mode"},
+			{Name: "dnsx", Kind: backend.KindResolver, State: backend.StateDisabled, Notes: "not used in fixture mode"},
+			{Name: "dnsx", Kind: backend.KindBruteforce, State: backend.StateDisabled, Notes: "not used in fixture mode"},
+			{Name: "alterx", Kind: backend.KindCandidates, State: backend.StateDisabled, Notes: "not used in fixture mode"},
 		}
+	}
+	bins := map[string]string{}
+	for _, b := range a.binPaths() {
+		bins[b.name] = b.path
+	}
+	makeInfo := func(name, kind string) backend.Info {
 		var pin adapters.PinnedTool
 		for _, candidate := range adapters.PinnedTools() {
 			if candidate.Name == name {
@@ -258,30 +296,33 @@ func (a *App) BackendInfos() []backend.Info {
 				break
 			}
 		}
+		path := bins[name]
 		info := backend.Info{
-			Name: name, Kind: kind, State: state, Version: pin.Version,
-			License: pin.License, LicenseVerified: pin.License != "",
-			BinaryConfigured: strings.TrimSpace(path) != "", Notes: note,
+			Name: name, Kind: kind, State: backend.StateReady,
+			Version: pin.Version, License: pin.License, LicenseVerified: pin.License != "",
+			BinaryConfigured: strings.TrimSpace(path) != "",
+			Notes:            "real backend; binary integrity verified against compiled release hash before execution",
 		}
-		if path != "" {
-			_, _, err := a.verifyPinnedBinary(name, path)
-			info.BinaryVerified = err == nil
-			info.VersionVerified = err == nil
-			if err != nil && g.State == GateUnverified {
-				info.Notes += "; " + err.Error()
-			}
+		if strings.TrimSpace(path) == "" {
+			info.State = backend.StateUnverified
+			info.Notes = fmt.Sprintf("binary not found; install the hash-pinned release into %s or set the corresponding %s/%s/%s env var", a.cfg.Backend.ManagedBinDir, EnvSubfinderBin, EnvDnsxBin, EnvAlterxBin)
+			return info
 		}
-		infos = append(infos, info)
+		_, _, err := a.verifyPinnedBinary(name, path)
+		info.BinaryVerified = err == nil
+		info.VersionVerified = err == nil
+		if err != nil {
+			info.State = backend.StateUnverified
+			info.Notes = err.Error()
+		}
+		return info
 	}
-	bins := map[string]string{}
-	for _, b := range a.binPaths() {
-		bins[b.name] = b.path
+	return []backend.Info{
+		makeInfo("subfinder", backend.KindPassive),
+		makeInfo("alterx", backend.KindCandidates),
+		makeInfo("dnsx", backend.KindResolver),
+		makeInfo("dnsx", backend.KindBruteforce),
 	}
-	addExternal("subfinder", backend.KindPassive, bins["subfinder"], true)
-	addExternal("dnsx", backend.KindResolver, bins["dnsx"], true)
-	addExternal("dnsx", backend.KindBruteforce, bins["dnsx"], true)
-	addExternal("alterx", backend.KindCandidates, bins["alterx"], false)
-	return infos
 }
 
 // DoctorCheck is one diagnostic line.
@@ -297,8 +338,9 @@ const (
 	CheckFail = "fail"
 )
 
-// Doctor performs local diagnostics. It never launches external binaries and
-// never sends traffic; its writeability check uses and removes a unique temp file.
+// Doctor performs local diagnostics. It never executes enumeration binaries
+// and never sends network traffic; its writeability check uses and removes a
+// unique temp file through the opened managed data root.
 func (a *App) Doctor() ([]DoctorCheck, error) {
 	root, pinned := a.pinnedRoot()
 	checks := []DoctorCheck{}
@@ -307,9 +349,13 @@ func (a *App) Doctor() ([]DoctorCheck, error) {
 		Detail: fmt.Sprintf("scope is not pinned yet; call start_run with scope_root (a registrable domain, e.g. \"bmkg.go.id\") to bind this process, or pre-pin with %s; apex is never in scope", EnvScopeRoot),
 	}
 	if pinned {
+		mode := "real backends"
+		if a.fixtureMode() {
+			mode = "fixture/test mode (in-process, clearly labeled)"
+		}
 		scopeCheck = DoctorCheck{
 			Name: "scope_root", State: CheckOK,
-			Detail: fmt.Sprintf("root %q pinned by this process; the apex is excluded, only subdomains are in scope", root),
+			Detail: fmt.Sprintf("root %q pinned (%s); the apex is excluded, only subdomains are in scope", root, mode),
 		}
 	}
 	checks = append(checks, scopeCheck)
@@ -346,61 +392,28 @@ func (a *App) Doctor() ([]DoctorCheck, error) {
 		checks = append(checks, DoctorCheck{Name: "runs", State: CheckOK, Detail: "no runs loaded; the data dir is bound to the pinned root at the first start_run"})
 	}
 
-	checks = append(checks, DoctorCheck{
-		Name: "fixture_backends", State: CheckOK,
-		Detail: "mock.subfinder, mock.alterx and mock.dnsx are ready; output is always labeled as fixture data",
-	})
-
-	g := a.externalGate()
-	st := CheckOK
-	switch g.State {
-	case GateRefused:
-		st = CheckFail
-	case GateUnverified:
-		st = CheckWarn
+	if a.fixtureMode() {
+		checks = append(checks, DoctorCheck{
+			Name: "backends", State: CheckOK,
+			Detail: "fixture/test mode active; mock.subfinder, mock.alterx and mock.dnsx run in-process with no network; output is clearly labeled as fixture data",
+		})
+	} else {
+		state := CheckOK
+		detail := "real backends ready; binaries match compiled release hashes (verified read-only, not executed)"
+		if pinned {
+			if err := a.verifyRealBackends(); err != nil {
+				state = CheckWarn
+				detail = err.Error()
+			}
+		} else {
+			state = CheckWarn
+			detail = "scope not pinned; binaries will be verified before execution. " + detail
+		}
+		checks = append(checks, DoctorCheck{Name: "backends", State: state, Detail: detail})
 	}
-	if !pinned {
-		st = CheckWarn
-	} else if g.Requested && g.State == GateDisabled {
-		st = CheckFail
-	}
-	if g.State == GateReady && !g.LiveEnabled {
-		st = CheckWarn
-	}
-	checks = append(checks, DoctorCheck{
-		Name: "external_gate", State: st,
-		Detail: fmt.Sprintf("state %q; %s", g.State, strings.Join(g.Reasons, "; ")),
-	})
 	checks = append(checks, DoctorCheck{
 		Name: "traffic", State: CheckOK,
 		Detail: "v1.0.0 performs name enumeration only; no HTTP/HTTPS/TLS, ports, crawling, takeover checks, AXFR, reverse DNS, DNSSEC walking or monitoring",
 	})
 	return checks, nil
-}
-
-func (a *App) requireExternal(networkRequired bool) error {
-	g := a.externalGate()
-	if g.State != GateReady {
-		return fmt.Errorf("external backend gate is %s: %s", g.State, strings.Join(g.Reasons, "; "))
-	}
-	if networkRequired && !g.LiveEnabled {
-		return fmt.Errorf("live network backend is disabled; %s=1 is required only after written program-policy clearance", EnvLiveEnable)
-	}
-	return nil
-}
-
-// externalDiscover is a small test hook retained for backwards compatibility;
-// normal MCP calls use the typed adapter directly and the same gates.
-func (a *App) externalDiscover(ctx context.Context) ([]string, error) {
-	if err := a.requireExternal(true); err != nil {
-		return nil, err
-	}
-	records, err := a.external.Discover(ctx, backend.DiscoverRequest{
-		RunID: "diagnostic", Root: a.Root(), MaxRecords: CapMaxRecordsPerCall,
-		Timeout: time.Duration(DefaultTimeoutSeconds) * time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return hostnames(records), nil
 }

@@ -15,6 +15,7 @@ import (
 
 type StartRunIn struct {
 	ScopeRoot string `json:"scope_root,omitempty" jsonschema:"registrable domain to enumerate (for example \"bmkg.go.id\"); required on the first call — this process then pins to that root and later calls must use the same root"`
+	Fixture   bool   `json:"fixture,omitempty" jsonschema:"explicitly request in-process, clearly labeled fixture/test mode (no real backends, no network); for tests and local development only"`
 }
 type StartRunOut struct {
 	RunID string `json:"run_id"`
@@ -22,7 +23,7 @@ type StartRunOut struct {
 }
 
 func (a *App) handleStartRun(ctx context.Context, req *mcp.CallToolRequest, in StartRunIn) (*mcp.CallToolResult, StartRunOut, error) {
-	if err := a.pinScope(in.ScopeRoot); err != nil {
+	if err := a.pinScope(in.ScopeRoot, in.Fixture || a.cfg.Fixture); err != nil {
 		return nil, StartRunOut{}, err
 	}
 	run, err := a.store.CreateRun()
@@ -118,15 +119,18 @@ type BackendsIn struct{}
 type BackendsOut struct {
 	ScopeRoot string         `json:"scope_root"`
 	DataDir   string         `json:"data_dir"`
-	External  ExternalGate   `json:"external"`
+	Fixture   bool           `json:"fixture"`
+	Pinned    bool           `json:"pinned"`
 	Backends  []backend.Info `json:"backends"`
 }
 
 func (a *App) handleListBackends(ctx context.Context, req *mcp.CallToolRequest, in BackendsIn) (*mcp.CallToolResult, BackendsOut, error) {
+	_, pinned := a.pinnedRoot()
 	return nil, BackendsOut{
 		ScopeRoot: a.Root(),
 		DataDir:   a.DataDir(),
-		External:  a.externalGate(),
+		Fixture:   a.fixtureMode(),
+		Pinned:    pinned,
 		Backends:  a.BackendInfos(),
 	}, nil
 }

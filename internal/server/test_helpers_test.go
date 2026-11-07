@@ -38,6 +38,7 @@ func testConfig(t *testing.T, mutate func(*Config)) *Config {
 	cfg := &Config{
 		ScopeRoot: "example.com",
 		DataDir:   dir,
+		Fixture:   true,
 	}
 	if mutate != nil {
 		mutate(cfg)

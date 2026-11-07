@@ -34,26 +34,6 @@ func rec(runID, host, status string, inScope bool, dropReason string) *model.Rec
 	}
 }
 
-func TestCheckModeBeforeWriting(t *testing.T) {
-	s := newTestStore(t)
-	run, err := s.CreateRun()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := run.CheckMode(false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := run.Upsert(rec(run.ID, "api.example.com", "candidate", true, "")); err != nil {
-		t.Fatal(err)
-	}
-	if err := run.CheckMode(true); err != nil {
-		t.Fatal(err)
-	}
-	if err := run.CheckMode(false); err == nil {
-		t.Fatal("external mode accepted fixture run")
-	}
-}
-
 func TestOpen_CreatesManagedDirs(t *testing.T) {
 	s := newTestStore(t)
 	for _, sub := range []string{"runs", "exports", "work"} {
@@ -103,55 +83,6 @@ func TestRunLifecycleAndUpsertMerge(t *testing.T) {
 	}
 	if run.Count() != 1 {
 		t.Fatalf("count = %d, want 1 (dedupe by host)", run.Count())
-	}
-}
-
-func TestRejectsMixedFixtureAndLiveObservations(t *testing.T) {
-	s := newTestStore(t)
-	r, err := s.CreateRun()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture := rec(r.ID, "api.example.com", "resolved", true, "")
-	if _, err := r.Upsert(fixture); err != nil {
-		t.Fatal(err)
-	}
-	live := rec(r.ID, "api.example.com", "no_answer", true, "")
-	live.Provenance[0].Fixture = false
-	if _, err := r.Upsert(live); err == nil {
-		t.Fatal("accepted mixed fixture and live observations")
-	}
-}
-
-func TestRejectsMixedModesAfterReopen(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir, "example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := s.CreateRun()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Upsert(rec(r.ID, "api.example.com", "candidate", true, "")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(dir, "example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	r, err = s.Run(r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	live := rec(r.ID, "other.example.com", "candidate", true, "")
-	live.Provenance[0].Fixture = false
-	if _, err := r.Upsert(live); err == nil {
-		t.Fatal("accepted live observation in fixture run")
 	}
 }
 

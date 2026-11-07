@@ -10,32 +10,32 @@ import (
 
 // Register installs all v1.0.0 tools on the MCP server.
 func (a *App) Register(srv *mcp.Server) {
-	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for a scope. The first call pins this server process to the requested registrable domain; later calls must use the same root or are rejected. Apex is never in scope."}, a.handleStartRun)
+	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for a scope. The first call pins this server process to the requested registrable domain; later calls must use the same root or are rejected. Apex is never in scope. Pass fixture=true only for explicit, clearly labeled offline test mode."}, a.handleStartRun)
 	addPortableTool(srv, &mcp.Tool{
 		Name: "discover_subdomains",
 		Description: "Passive subdomain discovery for the scope pinned by start_run (optionally pre-pinned with SUBENUM_SCOPE_ROOT). " +
-			"Call start_run first. Fixture mode is the default and runs in-process with no network. An explicitly enabled external mode uses the pinned passive-only Subfinder binary; it requires SUBENUM_EXTERNAL_ENABLE=1, matching operator authorization, verified binary hashes (auto-discovered from the managed dir or SUBENUM_SUBFINDER_BIN), and SUBENUM_LIVE_ENABLE=1. " +
+			"Call start_run first. Uses the real, hash-verified Subfinder backend by default and fails with a clear error if required binaries are missing or unverified. " +
 			"Structured max_records/timeout_seconds are hard-capped; model-provided flags and roots are not accepted. Apex is never in scope.",
 	}, a.handleDiscover)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "generate_candidates",
-		Description: "Generate in-scope candidate subdomains from hosts already stored in the run, using a deterministic " +
-			"offline fixture simulation by default, or the pinned AlterX local candidate generator when the external gate is enabled. " +
-			"No DNS request is made by this tool; candidate names are scope-filtered and hard-capped.",
+		Description: "Generate in-scope candidate subdomains from hosts already stored in the run using the hash-verified AlterX backend. " +
+			"No DNS request is made by this tool; candidate names are scope-filtered and hard-capped (AlterX output is capped at 5000). " +
+			"Use seed_offset/seed_limit to process stored seeds in batches.",
 	}, a.handleGenerateCandidates)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "bruteforce_subdomains",
-		Description: "Check only a registered preset wordlist against the pinned scope using the fixture backend by default. " +
-			"External mode uses the pinned dnsx binary (auto-discovered or SUBENUM_DNSX_BIN) and requires the external gate plus SUBENUM_LIVE_ENABLE=1; the wordlist is server-owned and bounded. " +
+		Description: "Check only a registered preset wordlist against the pinned scope using the hash-verified dnsx backend. " +
+			"Only registered presets are accepted (arbitrary paths rejected); the wordlist is server-owned and bounded. " +
 			"Absent answers are no_answer, never a conclusion of NXDOMAIN.",
 	}, a.handleBruteforce)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "resolve_hosts",
-		Description: "Resolve in-scope subdomains using the fixture backend by default. External mode uses pinned dnsx with a fixed rate, thread count, retry count and query timeout; it requires SUBENUM_LIVE_ENABLE=1. " +
-			"For large batches set timeout_seconds explicitly (up to 300) and paginate with host_offset/host_limit. " +
+		Description: "Resolve in-scope subdomains using the hash-verified dnsx backend with fixed rate/thread/retry/query settings. " +
+			"For large batches set timeout_seconds explicitly (up to 300) and paginate stored hosts with host_offset/host_limit (or split explicit host lists). " +
 			"Out-of-scope/malformed inputs are rejected before a backend call; empty answers become no_answer, never NXDOMAIN.",
 	}, a.handleResolve)
 
@@ -47,13 +47,13 @@ func (a *App) Register(srv *mcp.Server) {
 
 	addPortableTool(srv, &mcp.Tool{
 		Name:        "list_backends",
-		Description: "List offline fixture backends and pinned external backend state. External version/hash/license data comes from the compiled release pins; hashes are verified read-only without executing the binaries.",
+		Description: "List backend state for the pinned scope. In real mode, hashes are verified read-only against compiled release pins without executing binaries; missing or mismatched binaries are reported clearly.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, a.handleListBackends)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name:        "doctor",
-		Description: "Local diagnostics: scope configuration, data dir writability, runs, fixture backends and external gates. It uses and removes a unique write probe through the opened managed data root; it hashes configured binaries but never executes them or sends network traffic.",
+		Description: "Local diagnostics: scope, data dir writability, runs, and backend/binary verification state. It never executes enumeration binaries and never sends network traffic.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, a.handleDoctor)
 

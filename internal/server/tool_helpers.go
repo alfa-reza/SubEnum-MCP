@@ -11,11 +11,7 @@ import (
 	"github.com/alfa-reza/SubEnum-MCP/internal/store"
 )
 
-const (
-	fixtureMode         = "fixture"
-	externalMode        = "external"
-	responseSampleLimit = 20
-)
+const responseSampleLimit = 20
 
 func sampleRecords(records []*model.Record) []*model.Record {
 	if len(records) > responseSampleLimit {
@@ -84,18 +80,17 @@ func (a *App) upsertAll(run *store.Run, records []*model.Record) ([]*model.Recor
 	return out, nil
 }
 
-func (a *App) fixtureBackendInfo(name, kind string) backend.Info {
-	return backend.Info{Name: name, Kind: kind, State: backend.StateReadyFixture,
-		Notes: "offline deterministic fixture backend; label all output as fixture data"}
-}
-
-func (a *App) externalBackendInfo(name, kind string) backend.Info {
+func (a *App) backendInfo(name, kind string) backend.Info {
+	if a.fixtureMode() {
+		return backend.Info{Name: "mock." + name, Kind: kind, State: backend.StateReadyFixture,
+			Notes: "in-process deterministic fixture backend (test mode); output is clearly labeled as fixture data"}
+	}
 	for _, info := range a.BackendInfos() {
 		if info.Name == name && info.Kind == kind {
 			return info
 		}
 	}
-	return backend.Info{Name: name, Kind: kind, State: backend.StateUnverified, Notes: "backend state is unavailable"}
+	return backend.Info{Name: name, Kind: kind, State: backend.StateReady, Notes: "real backend"}
 }
 
 func timeoutForTool(seconds *int) (time.Duration, error) {

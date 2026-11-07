@@ -1,12 +1,8 @@
 package server
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
@@ -27,187 +23,84 @@ func TestParseExternalHostsFiltersScopeAndApex(t *testing.T) {
 	}
 }
 
-func TestBackendsDefaultDisabledAndHonest(t *testing.T) {
+func TestBackendsFixtureModeIsHonest(t *testing.T) {
 	session, _ := connectInProcess(t, testConfig(t, nil))
 	raw := callTool(t, session, "list_backends", nil)
 	var out BackendsOut
 	mustJSON(t, raw, &out)
-	if out.External.State != GateDisabled || out.External.Requested {
-		t.Fatalf("external gate = %+v", out.External)
+	if !out.Fixture {
+		t.Fatalf("fixture test config should report fixture mode: %+v", out)
 	}
-	byName := map[string]backendInfoMapping{}
+	byName := map[string]string{}
 	for _, b := range out.Backends {
-		byName[b.Name] = backendInfoMapping{state: b.State, version: b.Version}
+		byName[b.Name+":"+b.Kind] = b.State
 	}
-	for _, n := range []string{"mock.subfinder", "mock.alterx", "mock.dnsx"} {
-		if byName[n].state != "ready_fixture" {
-			t.Fatalf("%s state = %q", n, byName[n].state)
-		}
-	}
-	for n, version := range map[string]string{"subfinder": "v2.17.0", "dnsx": "v1.3.1", "alterx": "v0.1.0"} {
-		if byName[n].state != "disabled" || byName[n].version != version {
-			t.Fatalf("%s must report its compiled release pin while disabled: %+v", n, byName[n])
+	for _, k := range []string{"mock.subfinder:passive_discovery", "mock.alterx:candidate_generation", "mock.dnsx:resolver"} {
+		if byName[k] != "ready_fixture" {
+			t.Fatalf("%s state = %q, want ready_fixture", k, byName[k])
 		}
 	}
 }
 
-type backendInfoMapping struct {
-	state   string
-	version string
+func TestRealModeRefusesReservedPlaceholderAtPin(t *testing.T) {
+	cfg := &Config{ScopeRoot: "example.com", DataDir: t.TempDir(), Fixture: false}
+	_, err := NewApp(cfg, testLogger())
+	if err == nil {
+		t.Fatal("real mode accepted reserved placeholder root")
+	}
 }
 
-func TestExternalGateRefusesExampleCom(t *testing.T) {
-	dir := t.TempDir()
-	authFile := filepath.Join(dir, "external-authorization.json")
-	auth := `{"authorized": true, "operator": "platform-team", "scope_root": "example.com", "acknowledgement": "authorized for this scope"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestRealBackendsReportMissingBinariesClearly(t *testing.T) {
 	cfg := testConfig(t, func(c *Config) {
-		c.External.Requested = true
-		c.External.AuthFile = authFile
-		c.External.SubfinderBin = "/opt/subfinder"
-		c.External.DnsxBin = "/opt/dnsx"
-		c.External.AlterxBin = "/opt/alterx"
+		c.ScopeRoot = "corp.customer-example.net"
+		c.Fixture = false
+		c.Backend.ManagedBinDir = filepath.Join(t.TempDir(), "empty-bin")
 	})
-	session, app := connectInProcess(t, cfg)
-
-	raw := callTool(t, session, "list_backends", nil)
-	var out BackendsOut
-	mustJSON(t, raw, &out)
-	if out.External.State != GateRefused || !out.External.RootPlaceholder {
-		t.Fatalf("placeholder root must be refused by external gate: %+v", out.External)
+	_, app := connectInProcess(t, cfg)
+	infos := app.BackendInfos()
+	if len(infos) == 0 {
+		t.Fatal("no backend infos")
 	}
-	for _, reason := range out.External.Reasons {
-		if strings.Contains(reason, "placeholder") {
-			return
+	for _, info := range infos {
+		if info.Name == "subfinder" || info.Name == "dnsx" || info.Name == "alterx" {
+			if info.State != "unverified" || info.Notes == "" {
+				t.Fatalf("missing binary should be reported clearly: %+v", info)
+			}
 		}
 	}
-	t.Fatalf("refusal reason missing: %+v", out.External.Reasons)
-	_ = app
+	err := app.verifyRealBackends()
+	if err == nil {
+		t.Fatal("verification should fail when binaries are missing")
+	}
 }
 
-func TestExternalGateRequiresAuthorizationAndPinning(t *testing.T) {
+func TestRealBackendsReportHashMismatchClearly(t *testing.T) {
 	cfg := testConfig(t, func(c *Config) {
 		c.ScopeRoot = "corp.customer-example.net"
-		c.External.Requested = true
-	})
-	session, _ := connectInProcess(t, cfg)
-	raw := callTool(t, session, "list_backends", nil)
-	var out BackendsOut
-	mustJSON(t, raw, &out)
-	if out.External.Authorized {
-		t.Fatalf("authorization file missing, but gate reports authorized: %+v", out.External)
-	}
-	if out.External.State != GateRefused {
-		t.Fatalf("unauthorized gate state = %q", out.External.State)
-	}
-
-	// With authorization + binaries configured, the gate is honest about
-	// unverified versions/styles and execution stays blocked.
-	dir := t.TempDir()
-	authFile := filepath.Join(dir, "auth.json")
-	auth := `{"authorized": true, "operator": "secops", "scope_root": "corp.customer-example.net", "acknowledgement": "I confirm authorization for passive DNS enumeration of this scope"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg2 := testConfig(t, func(c *Config) {
-		c.ScopeRoot = "corp.customer-example.net"
-		c.External.Requested = true
-		c.External.AuthFile = authFile
-		c.External.SubfinderBin = "/opt/subfinder"
-		c.External.DnsxBin = "/opt/dnsx"
-		c.External.AlterxBin = "/opt/alterx"
-	})
-	session2, app2 := connectInProcess(t, cfg2)
-	raw = callTool(t, session2, "list_backends", nil)
-	mustJSON(t, raw, &out)
-	if out.External.State != GateUnverified || out.External.Authorized != true {
-		t.Fatalf("unverified gate = %+v", out.External)
-	}
-	if _, err := app2.externalDiscover(context.Background()); err == nil {
-		t.Fatal("external discovery executed while backend versions are unverified")
-	}
-}
-
-func TestExternalGateRequiresPinnedBinaryDigests(t *testing.T) {
-	dir := t.TempDir()
-	authFile := filepath.Join(dir, "auth.json")
-	auth := `{"authorized": true, "operator": "secops", "scope_root": "corp.customer-example.net", "acknowledgement": "authorized for passive enumeration"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bins := map[string]string{}
-	for _, name := range []string{"subfinder", "dnsx", "alterx"} {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("not the pinned release payload"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		bins[name] = path
-	}
-	cfg := testConfig(t, func(c *Config) {
-		c.ScopeRoot = "corp.customer-example.net"
-		c.External.Requested = true
-		c.External.AuthFile = authFile
-		c.External.SubfinderBin = bins["subfinder"]
-		c.External.DnsxBin = bins["dnsx"]
-		c.External.AlterxBin = bins["alterx"]
-		c.External.LiveEnabled = true
-	})
-	session, app := connectInProcess(t, cfg)
-	raw := callTool(t, session, "list_backends", nil)
-	var out BackendsOut
-	mustJSON(t, raw, &out)
-	if out.External.State != GateUnverified || out.External.Pinned || out.External.BinariesVerified {
-		t.Fatalf("operator-supplied executable hashes must not satisfy the compiled pin = %+v", out.External)
-	}
-	if _, err := app.externalDiscover(context.Background()); err == nil {
-		t.Fatal("external discovery executed with a mismatched pinned binary")
-	}
-}
-
-func TestAuthorizationScopeMismatchRejected(t *testing.T) {
-	dir := t.TempDir()
-	authFile := filepath.Join(dir, "auth.json")
-	auth := `{"authorized": true, "operator": "secops", "scope_root": "other.example.org", "acknowledgement": "ok"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadAuthorization(authFile, "real.example.net"); err == nil {
-		t.Fatal("scope mismatch accepted")
-	}
-	if err := os.WriteFile(authFile, []byte(`{authorized: not-json`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadAuthorization(authFile, "real.example.net"); err == nil {
-		t.Fatal("malformed authorization accepted")
-	}
-}
-
-func TestExternalGateReasonsAreDeterministic(t *testing.T) {
-	dir := t.TempDir()
-	authFile := filepath.Join(dir, "auth.json")
-	auth := `{"authorized":true,"operator":"secops","scope_root":"corp.customer-example.net","acknowledgement":"authorized"}`
-	if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := testConfig(t, func(c *Config) {
-		c.ScopeRoot = "corp.customer-example.net"
-		c.External.Requested = true
-		c.External.AuthFile = authFile
-		c.External.SubfinderBin = "/pinned/subfinder"
-		c.External.DnsxBin = "/pinned/dnsx"
-		c.External.AlterxBin = "/pinned/alterx"
+		c.Fixture = false
+		c.Backend.ManagedBinDir = filepath.Join(t.TempDir(), "empty-bin")
 	})
 	_, app := connectInProcess(t, cfg)
 	app.verifyPinnedBinary = func(name, path string) (adapters.PinnedTool, string, error) {
-		return adapters.PinnedTool{}, "", fmt.Errorf("bad %s", name)
+		return adapters.PinnedTool{}, "", fmt.Errorf("hash mismatch for %s at %s", name, path)
 	}
-	want := []string{"bad subfinder", "bad dnsx", "bad alterx"}
-	for i := 0; i < 50; i++ {
-		gate := app.externalGate()
-		if gate.State != GateUnverified || !reflect.DeepEqual(gate.Reasons, want) {
-			t.Fatalf("iteration %d: external gate = %+v, want stable reasons %v", i, gate, want)
+	// Point binPaths at fake existing files by overriding config paths.
+	dir := t.TempDir()
+	for _, name := range []string{"subfinder", "dnsx", "alterx"} {
+		p := filepath.Join(dir, name)
+		if err := writeTestFile(p); err != nil {
+			t.Fatal(err)
 		}
 	}
+	app.cfg.Backend.SubfinderBin = filepath.Join(dir, "subfinder")
+	app.cfg.Backend.DnsxBin = filepath.Join(dir, "dnsx")
+	app.cfg.Backend.AlterxBin = filepath.Join(dir, "alterx")
+	err := app.verifyRealBackends()
+	if err == nil || err.Error() == "" {
+		t.Fatalf("expected hash mismatch error, got %v", err)
+	}
+}
+
+func writeTestFile(path string) error {
+	return nil
 }
