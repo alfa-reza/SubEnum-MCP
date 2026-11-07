@@ -164,7 +164,7 @@ func writeJSONL(w io.Writer, records []*model.Record) error {
 }
 
 var csvHeader = []string{
-	"run_id", "host", "status", "provenance", "fixture_dns_records",
+	"run_id", "host", "status", "provenance", "fixture_dns_records", "observed_dns_records",
 	"observed_at", "in_scope", "drop_reason", "notes",
 }
 
@@ -181,6 +181,13 @@ func writeCSV(w io.Writer, records []*model.Record) error {
 			return err
 		}
 		var fixtureDNS []byte
+		var observedDNS []byte
+		if len(rec.ObservedDNSRecords) > 0 {
+			observedDNS, err = json.Marshal(rec.ObservedDNSRecords)
+			if err != nil {
+				return err
+			}
+		}
 		if len(rec.FixtureDNSRecords) > 0 {
 			fixtureDNS, err = json.Marshal(rec.FixtureDNSRecords)
 			if err != nil {
@@ -193,6 +200,7 @@ func writeCSV(w io.Writer, records []*model.Record) error {
 			string(rec.Status),
 			string(prov),
 			string(fixtureDNS),
+			string(observedDNS),
 			rec.ObservedAt.UTC().Format(time.RFC3339Nano),
 			fmt.Sprintf("%t", rec.InScope),
 			rec.DropReason,

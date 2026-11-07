@@ -92,7 +92,7 @@ func (b *Builder) BuildSubfinderDiscoverBounded(policy scope.Policy, maxResults 
 		Binary:        b.SubfinderBin,
 		PinnedBackend: "subfinder",
 		Args: []string{
-			"-d", root, "-silent", "-nc", "-oJ", "-duc",
+			"-d", root, "-silent", "-nc", "-oJ", "-cs", "-duc",
 			"-timeout", "10", "-max-time", strconv.Itoa(minutes),
 			"-rl", strconv.Itoa(DefaultSubfinderRate), "-mr", strconv.Itoa(maxResults),
 		},

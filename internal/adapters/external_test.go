@@ -74,6 +74,19 @@ func TestExternalDiscoverIsPassiveBoundedAndScopeFiltered(t *testing.T) {
 	}
 }
 
+func TestDiscoverPreservesSources(t *testing.T) {
+	ext, _ := testExternal(t, func(ExecSpec) ([]byte, []byte, error) {
+		return []byte(`{"host":"api.` + testRoot + `","sources":["crtsh","github"]}` + "\n"), nil, nil
+	})
+	records, err := ext.Discover(context.Background(), backend.DiscoverRequest{RunID: "run", Root: testRoot, MaxRecords: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || len(records[0].Provenance) != 3 {
+		t.Fatalf("sources lost: %+v", records)
+	}
+}
+
 func TestExternalGenerateFiltersSeedsAndOutput(t *testing.T) {
 	ext, fake := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) {
 		if spec.Binary != "/pinned/alterx" {
@@ -188,6 +201,9 @@ func TestExternalResolveOnlyCallsDNSForInScopeHosts(t *testing.T) {
 	}
 	if len(records[0].FixtureDNSRecords) != 0 {
 		t.Fatalf("live DNS response must not be mislabeled as fixture data: %+v", records[0])
+	}
+	if got := records[0].ObservedDNSRecords["CNAME"]; len(got) != 1 || got[0] != "edge.example.net" {
+		t.Fatalf("live DNS values lost: %v", got)
 	}
 	if fake.CallCount() != 1 {
 		t.Fatalf("runner calls = %d", fake.CallCount())

@@ -6,7 +6,7 @@ An stdio-based MCP (Model Context Protocol) server for enumerating subdomain nam
 
 v1.0.0 collects subdomain names through passive discovery, local candidate generation, bounded DNS wordlist brute-force, and DNS A/AAAA/CNAME resolution. The root is read from `SUBENUM_SCOPE_ROOT` when the server starts and cannot be changed through tool input. It must be a registrable domain, not a public suffix. Only names within the `.<root>` label boundary are in scope; the apex/root itself is excluded. For example, `api.example.com` is under `example.com`, while `example.com` is not.
 
-HTTP/HTTPS/TLS are not part of v1.0.0 and remain on the v2.0.0 roadmap. v1.0.0 also does not include port scanning, crawling, takeover, vulnerability checks, AXFR, reverse DNS, DNSSEC walking, monitoring, or features outside subdomain-name enumeration. An empty DNS response is stored as `no_answer`, not treated as an NXDOMAIN conclusion. Results from real backends store observation status and provenance, not DNS/IP values.
+HTTP/HTTPS/TLS are not part of v1.0.0 and remain on the v2.0.0 roadmap. v1.0.0 also does not include port scanning, crawling, takeover, vulnerability checks, AXFR, reverse DNS, DNSSEC walking, monitoring, or features outside subdomain-name enumeration. An empty DNS response is stored as `no_answer`, not treated as an NXDOMAIN conclusion. Real DNS results retain A, AAAA and CNAME values separately from fixture data. A CNAME target is response data, not authorization to scan that target.
 
 Hostnames are lowercased, whitespace is trimmed, and exactly one trailing dot is removed. DNS label boundaries are checked explicitly. Unicode and `xn--` names are rejected because full IDNA/Punycode validation is not provided.
 

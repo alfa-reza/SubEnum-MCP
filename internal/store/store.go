@@ -508,6 +508,12 @@ func cloneRecord(rec *model.Record) *model.Record {
 			copy.FixtureDNSRecords[rrType] = append([]string(nil), values...)
 		}
 	}
+	if rec.ObservedDNSRecords != nil {
+		copy.ObservedDNSRecords = make(model.DNSRecords, len(rec.ObservedDNSRecords))
+		for rrType, values := range rec.ObservedDNSRecords {
+			copy.ObservedDNSRecords[rrType] = append([]string(nil), values...)
+		}
+	}
 	return &copy
 }
 

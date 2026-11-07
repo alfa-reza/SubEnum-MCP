@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,17 +79,60 @@ func (e *ExternalBackends) Discover(ctx context.Context, req backend.DiscoverReq
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	hosts, err := ParseExternalNames(stdout, e.scope)
+	scanner, err := newOutputScanner(stdout, "subfinder")
 	if err != nil {
 		return nil, err
 	}
-	if len(hosts) > req.MaxRecords {
-		hosts = hosts[:req.MaxRecords]
+	records := make([]*model.Record, 0)
+	byHost := map[string]*model.Record{}
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
+		}
+		var row struct {
+			Host    string   `json:"host"`
+			Source  string   `json:"source"`
+			Sources []string `json:"sources"`
+		}
+		if strings.HasPrefix(strings.TrimSpace(scanner.Text()), "{") {
+			if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+				return nil, fmt.Errorf("invalid subfinder JSON: %w", err)
+			}
+		} else {
+			row.Host = strings.TrimSpace(scanner.Text())
+		}
+		if row.Host == "" {
+			return nil, fmt.Errorf("subfinder output missing host")
+		}
+		classified := e.scope.Classify(row.Host)
+		if !classified.InScope {
+			continue
+		}
+		record := byHost[classified.Normalized]
+		if record == nil {
+			if len(records) >= req.MaxRecords {
+				continue
+			}
+			record = externalRecord(req.RunID, classified.Normalized, model.StatusCandidate, "subfinder", model.MethodPassive, "passive source result; not independently validated")
+			records = append(records, record)
+			byHost[classified.Normalized] = record
+		}
+		if row.Source != "" {
+			row.Sources = append(row.Sources, row.Source)
+		}
+		for _, source := range row.Sources {
+			if len(source) > 100 || strings.ContainsAny(source, "\r\n\t") {
+				return nil, fmt.Errorf("invalid subfinder source")
+			}
+			if source != "" {
+				record.AddProvenance(model.Provenance{Backend: "subfinder", Method: model.MethodPassive, Detail: "source: " + source})
+			}
+		}
 	}
-	records := make([]*model.Record, 0, len(hosts))
-	for _, host := range hosts {
-		records = append(records, externalRecord(req.RunID, host, model.StatusCandidate, "subfinder", model.MethodPassive, "passive source result; pinned binary output; not independently validated"))
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read subfinder output: %w", err)
 	}
+
 	return records, nil
 }
 
@@ -195,22 +239,21 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	resolved, err := ParseDNSXNames(stdout, e.scope)
+	resolved, err := parseDNSXRecords(stdout, e.scope)
 	if err != nil {
 		return nil, err
 	}
-	resolvedSet := make(map[string]bool, len(resolved))
-	for _, host := range resolved {
-		resolvedSet[host] = true
-	}
+
 	records := make([]*model.Record, 0, len(words))
 	for _, word := range words {
 		host := word + "." + e.scope.Root()
 		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
-		if resolvedSet[host] {
-			status, note = model.StatusResolved, "DNS response observed; response values are not retained by the name-enumeration tool"
+		if _, ok := resolved[host]; ok {
+			status, note = model.StatusResolved, "DNS response observed"
 		}
-		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note))
+		record := externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note)
+		record.ObservedDNSRecords = resolved[host]
+		records = append(records, record)
 	}
 	return records, nil
 }
@@ -249,21 +292,20 @@ func (e *ExternalBackends) Resolve(ctx context.Context, req backend.ResolveReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	resolved, err := ParseDNSXNames(stdout, e.scope)
+	resolved, err := parseDNSXRecords(stdout, e.scope)
 	if err != nil {
 		return nil, err
 	}
-	resolvedSet := make(map[string]bool, len(resolved))
-	for _, host := range resolved {
-		resolvedSet[host] = true
-	}
+
 	records := make([]*model.Record, 0, len(hosts))
 	for _, host := range hosts {
 		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
-		if resolvedSet[host] {
-			status, note = model.StatusResolved, "DNS response observed; response values are not retained by the name-enumeration tool"
+		if _, ok := resolved[host]; ok {
+			status, note = model.StatusResolved, "DNS response observed"
 		}
-		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note))
+		record := externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note)
+		record.ObservedDNSRecords = resolved[host]
+		records = append(records, record)
 	}
 	return records, nil
 }
@@ -318,6 +360,19 @@ func ParseExternalNames(stdout []byte, configuredScope *scope.Scope) ([]string, 
 // ParseDNSXNames validates every non-empty dnsx JSONL row. A malformed or
 // incomplete row is an execution error, not evidence that a host had no answer.
 func ParseDNSXNames(stdout []byte, configuredScope *scope.Scope) ([]string, error) {
+	records, err := parseDNSXRecords(stdout, configuredScope)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(records))
+	for host := range records {
+		names = append(names, host)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]model.DNSRecords, error) {
 	if configuredScope == nil {
 		return nil, fmt.Errorf("configured scope is required to parse dnsx output")
 	}
@@ -325,31 +380,42 @@ func ParseDNSXNames(stdout []byte, configuredScope *scope.Scope) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	out := make([]string, 0)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		line := string(scanner.Bytes())
-		line = strings.TrimSpace(line)
-		if line == "" {
+	out := map[string]model.DNSRecords{}
+	for line := 1; scanner.Scan(); line++ {
+		if strings.TrimSpace(scanner.Text()) == "" {
 			continue
 		}
 		var result struct {
-			Host string `json:"host"`
+			Host  string   `json:"host"`
+			A     []string `json:"a"`
+			AAAA  []string `json:"aaaa"`
+			CNAME []string `json:"cname"`
 		}
-		if err := json.Unmarshal([]byte(line), &result); err != nil {
-			return nil, fmt.Errorf("dnsx output line %d is not valid JSON: %w", lineNumber, err)
+		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+			return nil, fmt.Errorf("dnsx output line %d is not valid JSON: %w", line, err)
 		}
 		if strings.TrimSpace(result.Host) == "" {
-			return nil, fmt.Errorf("dnsx output line %d is missing a host field", lineNumber)
+			return nil, fmt.Errorf("dnsx output line %d is missing a host field", line)
 		}
 		classified := configuredScope.Classify(result.Host)
-		if !classified.InScope || seen[classified.Normalized] {
+		if !classified.InScope {
 			continue
 		}
-		seen[classified.Normalized] = true
-		out = append(out, classified.Normalized)
+		records := out[classified.Normalized]
+		if records == nil {
+			records = model.DNSRecords{}
+		}
+		for typ, vals := range map[string][]string{"A": result.A, "AAAA": result.AAAA, "CNAME": result.CNAME} {
+			for _, value := range vals {
+				if len(value) > 253 || strings.ContainsAny(value, "\r\n\t") {
+					return nil, fmt.Errorf("dnsx output line %d contains invalid %s value", line, typ)
+				}
+			}
+			if len(vals) > 0 {
+				records[typ] = model.UnionStrings(records[typ], vals)
+			}
+		}
+		out[classified.Normalized] = records
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read dnsx output: %w", err)

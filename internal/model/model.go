@@ -70,8 +70,7 @@ func (p Provenance) Key() string {
 	return p.Backend + "|" + p.Method + "|" + p.Detail + "|" + fmt.Sprintf("%t", p.Fixture)
 }
 
-// DNSRecords maps RR type to values. Populated only by fixture DNS records;
-// external name-enumeration adapters do not retain response values.
+// DNSRecords maps RR type to observed or synthetic values.
 type DNSRecords map[string][]string
 
 // Record is the minimum exported enumeration unit.
@@ -82,11 +81,12 @@ type Record struct {
 	Provenance []Provenance `json:"provenance"`
 	// FixtureDNSRecords is populated only when the observation comes from the
 	// offline fixture backend; it must never be presented as live DNS data.
-	FixtureDNSRecords DNSRecords `json:"fixture_dns_records,omitempty"`
-	ObservedAt        time.Time  `json:"observed_at"`
-	InScope           bool       `json:"in_scope"`
-	DropReason        string     `json:"drop_reason,omitempty"`
-	Notes             string     `json:"notes,omitempty"`
+	FixtureDNSRecords  DNSRecords `json:"fixture_dns_records,omitempty"`
+	ObservedDNSRecords DNSRecords `json:"observed_dns_records,omitempty"`
+	ObservedAt         time.Time  `json:"observed_at"`
+	InScope            bool       `json:"in_scope"`
+	DropReason         string     `json:"drop_reason,omitempty"`
+	Notes              string     `json:"notes,omitempty"`
 }
 
 func NewRecord(runID, host string, status Status, prov Provenance, inScope bool, dropReason string) *Record {
@@ -137,6 +137,14 @@ func Merge(dst, src *Record) {
 		}
 		for rr, vals := range src.FixtureDNSRecords {
 			dst.FixtureDNSRecords[rr] = UnionStrings(dst.FixtureDNSRecords[rr], vals)
+		}
+	}
+	if len(src.ObservedDNSRecords) > 0 {
+		if dst.ObservedDNSRecords == nil {
+			dst.ObservedDNSRecords = DNSRecords{}
+		}
+		for rr, vals := range src.ObservedDNSRecords {
+			dst.ObservedDNSRecords[rr] = UnionStrings(dst.ObservedDNSRecords[rr], vals)
 		}
 	}
 	if src.Notes != "" && !strings.Contains(dst.Notes, src.Notes) {
