@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -252,6 +254,14 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
+	// Wildcard canary: when the preset produced any DNS answer, probe exactly
+	// three random labels. A positive answer means the zone may respond for
+	// anything, so resolved preset results get a wildcard-suspected note.
+	// Canary self-failures are non-fatal: no note, results unchanged.
+	wildcardSuspected := false
+	if anyDNSAnswer(observations) {
+		wildcardSuspected = e.canaryWildcard(ctx)
+	}
 
 	records := make([]*model.Record, 0, len(words))
 	for _, word := range words {
@@ -269,7 +279,30 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 		}
 		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note))
 	}
+	if timedOut {
+		markCallTimedOut(records)
+	}
+	if wildcardSuspected {
+		for _, record := range records {
+			if record.Status == model.StatusResolved && !strings.Contains(record.Notes, model.NoteWildcardSuspected) {
+				record.Notes = strings.TrimSpace(record.Notes + "; " + model.NoteWildcardSuspected)
+			}
+		}
+	}
 	return records, nil
+}
+
+// markCallTimedOut annotates records of a run that hit its time limit even
+// though every requested host already returned an observation.
+func markCallTimedOut(records []*model.Record) {
+	for _, record := range records {
+		if record.Status == model.StatusTimeout {
+			continue
+		}
+		if !strings.Contains(record.Notes, model.NoteCallTimedOut) {
+			record.Notes = strings.TrimSpace(record.Notes + "; " + model.NoteCallTimedOut)
+		}
+	}
 }
 
 func (e *ExternalBackends) Resolve(ctx context.Context, req backend.ResolveRequest) ([]*model.Record, error) {
@@ -332,6 +365,9 @@ func (e *ExternalBackends) Resolve(ctx context.Context, req backend.ResolveReque
 			status, note = model.StatusTimeout, "backend timed out before a response was observed for this host; retry with host_offset/host_limit or a larger timeout_seconds"
 		}
 		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note))
+	}
+	if timedOut {
+		markCallTimedOut(records)
 	}
 	return records, nil
 }
@@ -501,7 +537,7 @@ func dnsxStatusFromObservation(obs dnsxResult, hasAnswers bool) (model.Status, s
 	}
 	switch strings.ToUpper(strings.TrimSpace(obs.StatusCode)) {
 	case "NXDOMAIN":
-		return model.StatusNoAnswer, "NXDOMAIN (authoritative negative response)"
+		return model.StatusNoAnswer, "resolver reported NXDOMAIN"
 	case "SERVFAIL", "REFUSED", "NOTIMP", "FORMERR", "ERROR":
 		return model.StatusDNSError, fmt.Sprintf("DNS error/status: %s", obs.StatusCode)
 	case "TIMEOUT":
@@ -514,6 +550,50 @@ func dnsxStatusFromObservation(obs dnsxResult, hasAnswers bool) (model.Status, s
 		return model.StatusNoAnswer, fmt.Sprintf("no positive DNS answer observed (status %s)", obs.StatusCode)
 	}
 }
+
+func anyDNSAnswer(observations map[string]dnsxResult) bool {
+	for _, result := range observations {
+		if len(result.Records) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// canaryWildcard resolves exactly three random non-existent labels in the
+// pinned scope. Any observed record means the zone answers for arbitrary
+// names. Canary failures return false and never change enumeration results.
+func (e *ExternalBackends) canaryWildcard(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var b [8]byte
+	labels := make([]string, 0, wildcardCanaryLabels)
+	for i := 0; i < wildcardCanaryLabels; i++ {
+		if _, err := rand.Read(b[:]); err != nil {
+			return false
+		}
+		labels = append(labels, "wld-"+hex.EncodeToString(b[:]))
+	}
+	spec, err := e.builder.BuildDNSXResolveBounded(labels, wildcardCanaryLabels, wildcardCanaryTimeout)
+	if err != nil {
+		return false
+	}
+	stdout, _, err := e.runner.Run(ctx, spec)
+	if err != nil {
+		return false
+	}
+	obs, err := parseDNSXObservations(stdout, e.scope)
+	if err != nil {
+		return false
+	}
+	return anyDNSAnswer(obs)
+}
+
+const (
+	wildcardCanaryLabels  = 3
+	wildcardCanaryTimeout = 10 * time.Second
+)
 
 func newOutputScanner(stdout []byte, backendName string) (*bufio.Scanner, error) {
 	if len(stdout) > MaxOutputBytes {
@@ -531,11 +611,7 @@ func externalRecord(runID, host string, status model.Status, backendName, method
 		Detail:  detail,
 		Fixture: false,
 	}, true, "")
-	if status == model.StatusNoAnswer {
-		record.Notes = model.NoteNoAnswerNotNXDOMAIN
-	} else {
-		record.Notes = detail
-	}
+	record.Notes = detail
 	return record
 }
 

@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
 	"github.com/alfa-reza/SubEnum-MCP/internal/backend"
@@ -25,14 +28,18 @@ func sampleRecords(records []*model.Record) []*model.Record {
 func (a *App) runForWrite(runID string) (*store.Run, error) {
 	if strings.TrimSpace(runID) == "" {
 		if run, err := a.store.LatestRun(); err == nil {
-			return run, nil
+			return a.checkRunMode(run)
 		}
-		return a.store.CreateRun()
+		return a.store.CreateRun(a.fixtureMode())
 	}
 	if err := store.SafeRunID(runID); err != nil {
 		return nil, err
 	}
-	return a.store.Run(runID)
+	run, err := a.store.Run(runID)
+	if err != nil {
+		return nil, err
+	}
+	return a.checkRunMode(run)
 }
 
 // validateRunForWrite checks an explicit run id without creating a run. Empty
@@ -44,12 +51,54 @@ func (a *App) validateRunForWrite(runID string) error {
 	if err := store.SafeRunID(runID); err != nil {
 		return err
 	}
-	_, err := a.store.Run(runID)
+	run, err := a.store.Run(runID)
+	if err == nil {
+		_, err = a.checkRunMode(run)
+	}
 	return err
 }
 
 func (a *App) runForRead(runID string) (*store.Run, error) {
-	return a.store.ResolveRun(runID)
+	run, err := a.store.ResolveRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	return a.checkRunMode(run)
+}
+
+// checkRunMode refuses access to a run whose persisted mode differs from this
+// process. Legacy runs that predate mode persistence adopt this process's
+// mode when empty; otherwise the recorded provenance decides.
+func (a *App) checkRunMode(run *store.Run) (*store.Run, error) {
+	if run.ModeKnown {
+		if run.Fixture != a.fixtureMode() {
+			return nil, fmt.Errorf("run %s was created in %s mode; this process runs in %s mode; start a new run", run.ID, modeName(run.Fixture), modeName(a.fixtureMode()))
+		}
+		return run, nil
+	}
+	// Legacy runs that already contain records cannot adopt a persisted
+	// mode; their access stays provenance-checked.
+	for _, record := range run.InScope("") {
+		for _, provenance := range record.Provenance {
+			if provenance.Fixture != a.fixtureMode() {
+				return nil, fmt.Errorf("run %s contains records from a different fixture/real mode; start a new run", run.ID)
+			}
+		}
+	}
+	if len(run.InScope("")) > 0 || len(run.Dropped()) > 0 {
+		return run, nil
+	}
+	if err := run.SetMode(a.fixtureMode()); err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+func modeName(fixture bool) string {
+	if fixture {
+		return "fixture"
+	}
+	return "real"
 }
 
 func clampCap(v *int, def, max int, name string) (int, error) {
@@ -120,6 +169,95 @@ func statusCounts(records []*model.Record) map[string]int {
 		counts[string(r.Status)]++
 	}
 	return counts
+}
+
+// effectiveTimeoutSeconds reports the timeout applied to an operation.
+func effectiveTimeoutSeconds(timeout time.Duration) int {
+	return int(timeout / time.Second)
+}
+
+// dnsOperationWarning summarizes actionable signal from the latest call:
+// unobserved-host timeouts, call-limit hits even when every host answered,
+// and suspected wildcard answers.
+func dnsOperationWarning(records []*model.Record, counts map[string]int) string {
+	var parts []string
+	if n := counts[string(model.StatusTimeout)]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d host(s) timed out; partial results were kept where available — retry with a smaller batch, host_offset/host_limit and/or a larger timeout_seconds", n))
+	}
+	for _, record := range records {
+		if strings.Contains(record.Notes, model.NoteCallTimedOut) {
+			parts = append(parts, "the backend call reached its time limit although every host already returned an observation; confirm with a smaller batch if needed")
+			break
+		}
+	}
+	for _, record := range records {
+		if strings.Contains(record.Notes, model.NoteWildcardSuspected) {
+			parts = append(parts, model.NoteWildcardSuspected)
+			break
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+// resolveInternalChunkSize bounds one dnsx invocation inside a resolve_hosts
+// call. Larger requests are processed as sequential bounded batches with
+// progress notifications and persisted results after every batch.
+const resolveInternalChunkSize = 500
+
+// resolveInChunks runs the resolver over at most resolveInternalChunkSize
+// hosts per backend invocation, upserting results after every batch so a later
+// batch failure keeps earlier observations, and sending an MCP progress
+// notification between batches.
+func (a *App) resolveInChunks(ctx context.Context, req *mcp.CallToolRequest, run *store.Run, hosts []string, maxHosts int, timeout time.Duration, out *ResolveOut) error {
+	total := len(hosts)
+	for start, done := 0, 0; start < total; start += resolveInternalChunkSize {
+		end := min(start+resolveInternalChunkSize, total)
+		chunk := hosts[start:end]
+		var records []*model.Record
+		var err error
+		if a.fixtureMode() {
+			records, err = a.res.Resolve(ctx, backend.ResolveRequest{RunID: run.ID, Root: a.Root(), Hosts: chunk, MaxHosts: maxHosts, Timeout: timeout})
+		} else {
+			records, err = a.external.Resolve(ctx, backend.ResolveRequest{RunID: run.ID, Root: a.Root(), Hosts: chunk, MaxHosts: maxHosts, Timeout: timeout})
+		}
+		if err != nil {
+			return err
+		}
+		stored, err := a.upsertAll(run, records)
+		if err != nil {
+			return err
+		}
+		done = end
+		out.StatusCounts = mergeStatusCounts(out.StatusCounts, statusCounts(records))
+		out.Records = sampleRecords(append(out.Records, stored...))
+		if end < total {
+			a.notifyProgress(ctx, req, float64(done), float64(total), fmt.Sprintf("resolved %d of %d hosts", done, total))
+		}
+	}
+	out.TimeoutSeconds = effectiveTimeoutSeconds(timeout)
+	return nil
+}
+
+// notifyProgress emits one MCP progress notification. Clients that did not
+// request progress (no token) still receive the notification, which they may
+// ignore.
+func (a *App) notifyProgress(ctx context.Context, req *mcp.CallToolRequest, progress, total float64, message string) {
+	if req == nil || req.Session == nil {
+		return
+	}
+	params := &mcp.ProgressNotificationParams{ProgressToken: req.Params.GetProgressToken(), Progress: progress, Total: total, Message: message}
+	_ = req.Session.NotifyProgress(ctx, params)
+}
+
+func mergeStatusCounts(base, add map[string]int) map[string]int {
+	out := map[string]int{}
+	for k, v := range base {
+		out[k] += v
+	}
+	for k, v := range add {
+		out[k] += v
+	}
+	return out
 }
 
 type DroppedInput struct {

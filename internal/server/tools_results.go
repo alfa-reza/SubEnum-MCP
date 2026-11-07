@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
 	"github.com/alfa-reza/SubEnum-MCP/internal/backend"
 	"github.com/alfa-reza/SubEnum-MCP/internal/model"
 )
@@ -26,7 +27,7 @@ func (a *App) handleStartRun(ctx context.Context, req *mcp.CallToolRequest, in S
 	if err := a.pinScope(in.ScopeRoot, in.Fixture || a.cfg.Fixture); err != nil {
 		return nil, StartRunOut{}, err
 	}
-	run, err := a.store.CreateRun()
+	run, err := a.store.CreateRun(a.fixtureMode())
 	if err != nil {
 		return nil, StartRunOut{}, err
 	}
@@ -117,11 +118,45 @@ func (a *App) handleGetResults(ctx context.Context, req *mcp.CallToolRequest, in
 type BackendsIn struct{}
 
 type BackendsOut struct {
-	ScopeRoot string         `json:"scope_root"`
-	DataDir   string         `json:"data_dir"`
-	Fixture   bool           `json:"fixture"`
-	Pinned    bool           `json:"pinned"`
-	Backends  []backend.Info `json:"backends"`
+	ScopeRoot string              `json:"scope_root"`
+	DataDir   string              `json:"data_dir"`
+	Fixture   bool                `json:"fixture"`
+	Pinned    bool                `json:"pinned"`
+	Settings  OperationalSettings `json:"settings" jsonschema:"effective server-owned operational parameters used by the real backends"`
+	Backends  []backend.Info      `json:"backends"`
+}
+
+// OperationalSettings documents the effective server-owned execution
+// parameters so results can be interpreted and reproduced by hand.
+type OperationalSettings struct {
+	SubfinderRateLimit int      `json:"subfinder_rate_limit" jsonschema:"subfinder requests per second (-rl)"`
+	DnsxRateLimit      int      `json:"dnsx_rate_limit" jsonschema:"dnsx queries per second (-rl)"`
+	DnsxThreads        int      `json:"dnsx_threads" jsonschema:"dnsx worker threads (-t)"`
+	DnsxRetry          int      `json:"dnsx_retry" jsonschema:"dnsx retries per query (-retry)"`
+	DnsxQueryTimeout   string   `json:"dnsx_query_timeout" jsonschema:"dnsx per-query timeout"`
+	AlterXOutputLimit  string   `json:"alterx_output_limit" jsonschema:"alterx output size limit"`
+	Resolvers          []string `json:"resolvers,omitempty" jsonschema:"configured dnsx resolvers; empty means dnsx built-in resolvers"`
+	RecordTypes        []string `json:"record_types" jsonschema:"DNS record types queried for every resolution"`
+}
+
+func (a *App) operationalSettings() OperationalSettings {
+	resolvers := []string{}
+	for _, r := range strings.Split(a.cfg.Backend.DnsxResolvers, ",") {
+		trimmed := strings.TrimSpace(r)
+		if trimmed != "" {
+			resolvers = append(resolvers, trimmed)
+		}
+	}
+	return OperationalSettings{
+		SubfinderRateLimit: adapters.DefaultSubfinderRate,
+		DnsxRateLimit:      adapters.DNSXRateLimit,
+		DnsxThreads:        adapters.DNSXThreads,
+		DnsxRetry:          adapters.DNSXRetry,
+		DnsxQueryTimeout:   adapters.DNSXQueryTimeout,
+		AlterXOutputLimit:  adapters.AlterXOutputLimit,
+		Resolvers:          resolvers,
+		RecordTypes:        []string{"A", "AAAA", "CNAME"},
+	}
 }
 
 func (a *App) handleListBackends(ctx context.Context, req *mcp.CallToolRequest, in BackendsIn) (*mcp.CallToolResult, BackendsOut, error) {
@@ -131,6 +166,7 @@ func (a *App) handleListBackends(ctx context.Context, req *mcp.CallToolRequest, 
 		DataDir:   a.DataDir(),
 		Fixture:   a.fixtureMode(),
 		Pinned:    pinned,
+		Settings:  a.operationalSettings(),
 		Backends:  a.BackendInfos(),
 	}, nil
 }

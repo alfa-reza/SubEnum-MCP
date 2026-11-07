@@ -54,6 +54,14 @@ const (
 // misread as a negative DNS response code.
 const NoteNoAnswerNotNXDOMAIN = "no positive DNS answer observed; this does not distinguish timeout, resolver failure, or NXDOMAIN"
 
+// NoteCallTimedOut marks every record of a backend run whose wall-clock limit
+// ended even though each host already returned an observation.
+const NoteCallTimedOut = "backend call reached its time limit"
+
+// NoteWildcardSuspected marks DNS answers returned while a random-label
+// canary also resolved, indicating a possible wildcard answer.
+const NoteWildcardSuspected = "wildcard answer suspected: random-label canary also resolved; values may be wildcard answers, not proof of a unique host"
+
 // NoteFixtureLabel marks outputs produced by the offline fixture backend so
 // they can never be confused with observed results.
 const NoteFixtureLabel = "fixture output: synthetic offline data, not an observed result"

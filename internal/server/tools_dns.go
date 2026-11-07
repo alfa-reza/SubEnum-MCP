@@ -23,16 +23,17 @@ type BruteforceIn struct {
 }
 
 type BruteforceOut struct {
-	RunID        string          `json:"run_id" jsonschema:"run identifier receiving the results"`
-	Root         string          `json:"root" jsonschema:"configured scope root"`
-	Mode         string          `json:"mode" jsonschema:"real or fixture test mode"`
-	Fixture      bool            `json:"fixture" jsonschema:"whether outputs are synthetic fixture data"`
-	Wordlist     string          `json:"wordlist" jsonschema:"registered preset used for this call"`
-	WordsQueried int             `json:"words_queried" jsonschema:"number of preset words processed, bounded by max_words"`
-	StatusCounts map[string]int  `json:"status_counts" jsonschema:"result counts grouped by DNS status"`
-	Records      []*model.Record `json:"records" jsonschema:"stored in-scope records produced by the preset check"`
-	Backend      backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
-	Warning      string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout results; use batching or a larger timeout"`
+	RunID          string          `json:"run_id" jsonschema:"run identifier receiving the results"`
+	Root           string          `json:"root" jsonschema:"configured scope root"`
+	Mode           string          `json:"mode" jsonschema:"real or fixture test mode"`
+	Fixture        bool            `json:"fixture" jsonschema:"whether outputs are synthetic fixture data"`
+	Wordlist       string          `json:"wordlist" jsonschema:"registered preset used for this call"`
+	WordsQueried   int             `json:"words_queried" jsonschema:"number of preset words processed, bounded by max_words"`
+	StatusCounts   map[string]int  `json:"status_counts" jsonschema:"current call result counts grouped by DNS status before merging with historical records"`
+	Records        []*model.Record `json:"records" jsonschema:"stored in-scope records produced by the preset check"`
+	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"timeout applied to the preset check"`
+	Backend        backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
+	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeouts or a suspected wildcard zone"`
 }
 
 func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in BruteforceIn) (result *mcp.CallToolResult, output BruteforceOut, retErr error) {
@@ -96,30 +97,28 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, BruteforceOut{}, err
 	}
+	counts := statusCounts(records)
 	stored, err := a.upsertAll(run, records)
 	if err != nil {
 		return nil, BruteforceOut{}, err
 	}
-	counts := statusCounts(stored)
 	mode := "real"
 	if a.fixtureMode() {
 		mode = "fixture"
 	}
-	warning := ""
-	if counts[string(model.StatusTimeout)] > 0 {
-		warning = fmt.Sprintf("%d host(s) timed out; partial results were kept where available — retry with a smaller max_words or a larger timeout_seconds", counts[string(model.StatusTimeout)])
-	}
+	warning := dnsOperationWarning(stored, counts)
 	return nil, BruteforceOut{
-		RunID:        run.ID,
-		Root:         a.Root(),
-		Mode:         mode,
-		Fixture:      a.fixtureMode(),
-		Wordlist:     preset,
-		WordsQueried: len(stored),
-		StatusCounts: counts,
-		Records:      sampleRecords(stored),
-		Backend:      a.backendInfo("dnsx", backend.KindBruteforce),
-		Warning:      warning,
+		RunID:          run.ID,
+		Root:           a.Root(),
+		Mode:           mode,
+		Fixture:        a.fixtureMode(),
+		Wordlist:       preset,
+		WordsQueried:   len(stored),
+		StatusCounts:   counts,
+		Records:        sampleRecords(stored),
+		TimeoutSeconds: effectiveTimeoutSeconds(timeout),
+		Backend:        a.backendInfo("dnsx", backend.KindBruteforce),
+		Warning:        warning,
 	}, nil
 }
 
@@ -142,14 +141,15 @@ type ResolveOut struct {
 	Requested      int             `json:"requested" jsonschema:"number of hostnames supplied or selected from the run for this call"`
 	Accepted       int             `json:"accepted" jsonschema:"unique in-scope subdomains sent to a resolver"`
 	Dropped        []DroppedInput  `json:"dropped" jsonschema:"out-of-scope or malformed inputs rejected before any backend call"`
-	StatusCounts   map[string]int  `json:"status_counts" jsonschema:"accepted result counts grouped by DNS status"`
+	StatusCounts   map[string]int  `json:"status_counts" jsonschema:"current call result counts grouped by DNS status before merging with historical records"`
 	Records        []*model.Record `json:"records" jsonschema:"stored in-scope resolution records"`
 	Backend        backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
 	HostTotal      int             `json:"host_total,omitempty" jsonschema:"total stored in-scope hosts in the run when hosts is omitted"`
 	HostOffset     int             `json:"host_offset,omitempty" jsonschema:"offset used over stored in-scope hosts when hosts is omitted"`
 	HostBatch      int             `json:"host_batch,omitempty" jsonschema:"stored in-scope hosts selected for this call when hosts is omitted"`
 	HostNextOffset *int            `json:"host_next_offset,omitempty" jsonschema:"next offset over stored in-scope hosts, or null when no hosts remain"`
-	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout results; batch with host_offset/host_limit or increase timeout_seconds"`
+	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"per-batch timeout applied; batches of up to 500 hosts are run sequentially with progress notifications"`
+	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout or suspected wildcard results; batch with host_offset/host_limit or increase timeout_seconds"`
 }
 
 func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in ResolveIn) (*mcp.CallToolResult, ResolveOut, error) {
@@ -260,24 +260,13 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 	out.Accepted = len(hosts)
 
 	if len(hosts) > 0 {
-		var records []*model.Record
-		if a.fixtureMode() {
-			records, err = a.res.Resolve(ctx, backend.ResolveRequest{RunID: run.ID, Root: a.Root(), Hosts: hosts, MaxHosts: maxHosts, Timeout: timeout})
-		} else {
-			records, err = a.external.Resolve(ctx, backend.ResolveRequest{RunID: run.ID, Root: a.Root(), Hosts: hosts, MaxHosts: maxHosts, Timeout: timeout})
-		}
-		if err != nil {
+		if err := a.resolveInChunks(ctx, req, run, hosts, maxHosts, timeout, &out); err != nil {
 			return nil, ResolveOut{}, err
 		}
-		stored, err := a.upsertAll(run, records)
-		if err != nil {
-			return nil, ResolveOut{}, err
-		}
-		out.Records = sampleRecords(stored)
-		out.StatusCounts = statusCounts(stored)
 	} else {
 		out.Records = []*model.Record{}
 		out.StatusCounts = map[string]int{}
+		out.TimeoutSeconds = effectiveTimeoutSeconds(timeout)
 	}
 	for _, dropped := range out.Dropped {
 		host := dropped.Host
@@ -298,9 +287,7 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 		}
 	}
 	out.Backend = a.backendInfo("dnsx", backend.KindResolver)
-	if out.StatusCounts[string(model.StatusTimeout)] > 0 {
-		out.Warning = fmt.Sprintf("%d host(s) timed out; partial results were kept where available — retry with host_offset/host_limit and/or a larger timeout_seconds", out.StatusCounts[string(model.StatusTimeout)])
-	}
+	out.Warning = dnsOperationWarning(out.Records, out.StatusCounts)
 	return nil, out, nil
 }
 

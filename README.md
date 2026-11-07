@@ -90,9 +90,17 @@ Tool input is structured: there are no parameters for commands, shells, binary p
 | `doctor` | Local scope/data/binary diagnostics | Does not execute enumeration binaries or send traffic. |
 | `export_results` | JSONL/CSV in a managed folder | `jsonl` or `csv`; maximum 100,000 rows and 64 MiB; CSV hardened against formula injection. |
 
-Discovery, generation, brute-force and resolution responses include at most 20 records as a sample. Use `get_results` for paginated stored results. When `hosts` is omitted, `resolve_hosts` and `generate_candidates` report batch progress (`host_*`/`seed_*` fields).
+Discovery, generation, brute-force and resolution responses include at most 20 records as a sample. Use `get_results` for paginated stored results. Discovery reports `cap_reached` when the number of returned unique names equals the requested cap; it does not establish whether any results were actually truncated. Passive sources may be incomplete even below the cap. When `hosts` is omitted, `resolve_hosts` and `generate_candidates` report batch position (`host_*`/`seed_*` fields); these are not asynchronous progress notifications. `status_counts` and `warning` describe the latest call; sampled stored records retain cumulative historical status.
 
-Wildcard DNS detection is not implemented in v1.0.0. A `resolved` result can be a wildcard answer and does not by itself prove that the specific name exists independently; validate important findings separately.
+`resolve_hosts` processes requests in internal batches of at most 500 hosts per dnsx invocation, persisting results after every batch and emitting an MCP progress notification between batches; `timeout_seconds` applies per batch. A backend call that hits its time limit marks unobserved hosts `timeout` and, when every requested host already returned an observation, annotates records with a call-limit note surfaced in the response `warning`.
+
+`list_backends` reports the effective server-owned operational parameters (rate limits, threads, retry, per-query timeout, resolvers, record types) under `settings`, so results can be interpreted and reproduced by hand.
+
+`bruteforce_subdomains` probes three random-label wildcard canaries whenever the preset produced any DNS answer; if a canary resolves too, every resolved result carries a `wildcard answer suspected` note and the response `warning` explains it. Canary self-failures change nothing: no note, no result alteration.
+
+Runs persist their fixture/real mode at creation. Accessing a run from the other mode is rejected. Legacy runs created before mode persistence adopt this process's mode only while empty; any non-empty legacy run is validated against the recorded provenance on every access. Use a separate data directory for fixture tests and real work.
+
+Wildcard DNS detection is limited to the bruteforce canary described above. A `resolved` result can still be a wildcard answer and does not by itself prove that the specific name exists independently; validate important findings separately.
 
 All external output is reclassified against the root; the apex, invalid formats, and non-matching suffixes are discarded. Rejected resolve inputs are recorded as rejected-at-intake and are never sent to a backend, included in pagination, or exported. Each run's data is bound to the root used when it was created.
 

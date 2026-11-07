@@ -2,7 +2,9 @@ package server
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
@@ -96,11 +98,11 @@ func TestRealBackendsReportHashMismatchClearly(t *testing.T) {
 	app.cfg.Backend.DnsxBin = filepath.Join(dir, "dnsx")
 	app.cfg.Backend.AlterxBin = filepath.Join(dir, "alterx")
 	err := app.verifyRealBackends()
-	if err == nil || err.Error() == "" {
+	if err == nil || !strings.Contains(err.Error(), "hash mismatch") {
 		t.Fatalf("expected hash mismatch error, got %v", err)
 	}
 }
 
 func writeTestFile(path string) error {
-	return nil
+	return os.WriteFile(path, []byte("not a backend"), 0o600)
 }

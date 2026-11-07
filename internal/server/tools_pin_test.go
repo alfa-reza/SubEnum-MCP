@@ -17,7 +17,7 @@ func TestDefaultDataDirectoriesAreIsolatedByScope(t *testing.T) {
 		if app.DataDir() != filepath.Join(base, root) {
 			t.Fatalf("unexpected data directory %q", app.DataDir())
 		}
-		if _, err := app.Store().CreateRun(); err != nil {
+		if _, err := app.Store().CreateRun(false); err != nil {
 			t.Fatal(err)
 		}
 		if err := app.Close(); err != nil {

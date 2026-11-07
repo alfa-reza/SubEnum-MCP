@@ -46,7 +46,7 @@ func TestOpen_CreatesManagedDirs(t *testing.T) {
 
 func TestRunLifecycleAndUpsertMerge(t *testing.T) {
 	s := newTestStore(t)
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestRunLifecycleAndUpsertMerge(t *testing.T) {
 
 func TestDroppedRecordCannotOverwriteInScopeHost(t *testing.T) {
 	s := newTestStore(t)
-	run, _ := s.CreateRun()
+	run, _ := s.CreateRun(false)
 	if _, err := run.Upsert(rec(run.ID, "api.example.com", "resolved", true, "")); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestDroppedRecordCannotOverwriteInScopeHost(t *testing.T) {
 
 func TestUpsertInvalidStatus(t *testing.T) {
 	s := newTestStore(t)
-	run, _ := s.CreateRun()
+	run, _ := s.CreateRun(false)
 	if _, err := run.Upsert(rec(run.ID, "api.example.com", "nxdomain", true, "")); err == nil {
 		t.Fatal("expected error for invalid status nxdomain")
 	}
@@ -114,7 +114,7 @@ func TestUpsertInvalidStatus(t *testing.T) {
 
 func TestUpsertRejectsRecordFromDifferentRun(t *testing.T) {
 	s := newTestStore(t)
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestUpsertRejectsRecordFromDifferentRun(t *testing.T) {
 
 func TestUpsertWriteFailureDoesNotMutateRunState(t *testing.T) {
 	s := newTestStore(t)
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestLoadRejectsRecordTaggedWithDifferentRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestSafeRunID(t *testing.T) {
 
 func TestInScopeAndDroppedPartition(t *testing.T) {
 	s := newTestStore(t)
-	run, _ := s.CreateRun()
+	run, _ := s.CreateRun(false)
 	run.Upsert(rec(run.ID, "a.example.com", "candidate", true, ""))
 	run.Upsert(rec(run.ID, "evil.test", "candidate", false, "out_of_scope"))
 	inScope := run.InScope("")
@@ -220,7 +220,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	run, _ := s.CreateRun()
+	run, _ := s.CreateRun(false)
 	run.Upsert(rec(run.ID, "api.example.com", "resolved", true, ""))
 
 	s2, err := Open(dir, "example.com")
@@ -247,7 +247,7 @@ func TestReopenRejectsMissingRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestOpeningDataDirWithDifferentScopeIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if _, err := s.CreateRun(); err != nil {
+	if _, err := s.CreateRun(false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(dir, "nested.example.com"); err == nil {
@@ -314,7 +314,7 @@ func TestRefuseSymlinkedRecordsFileOnLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,8 +353,8 @@ func TestMaterializeWorkFileGuards(t *testing.T) {
 
 func TestResolveRunLatest(t *testing.T) {
 	s := newTestStore(t)
-	first, _ := s.CreateRun()
-	second, _ := s.CreateRun()
+	first, _ := s.CreateRun(false)
+	second, _ := s.CreateRun(false)
 	got, err := s.ResolveRun("")
 	if err != nil {
 		t.Fatal(err)

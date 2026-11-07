@@ -142,6 +142,10 @@ func (a *App) pinScope(root string, fixture bool) error {
 	if trimmed == "" {
 		a.pinMu.RLock()
 		if a.pinned {
+			if fixture && !a.fixture {
+				a.pinMu.RUnlock()
+				return fmt.Errorf("this subenum-mcp process is pinned to real mode; restart to use fixture mode")
+			}
 			a.pinMu.RUnlock()
 			return nil
 		}
@@ -153,6 +157,9 @@ func (a *App) pinScope(root string, fixture bool) error {
 	if a.pinned {
 		want := strings.ToLower(strings.TrimSuffix(trimmed, "."))
 		if a.scope.Root() == want {
+			if fixture && !a.fixture {
+				return fmt.Errorf("this subenum-mcp process is pinned to real mode; restart to use fixture mode")
+			}
 			return nil
 		}
 		return fmt.Errorf("this subenum-mcp process is pinned to scope %q; it cannot switch to %q; restart the server for a different target", a.scope.Root(), trimmed)

@@ -148,6 +148,10 @@ func TestExternalBruteforceUsesBoundedServerOwnedPreset(t *testing.T) {
 	}
 	var wordlistPath string
 	ext, fake := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) {
+		if strings.HasPrefix(spec.Stdin, "wld-") {
+			// wildcard canary: no answer observed
+			return nil, nil, nil
+		}
 		idx := -1
 		for i, arg := range spec.Args {
 			if arg == "-w" && i+1 < len(spec.Args) {
@@ -184,8 +188,14 @@ func TestExternalBruteforceUsesBoundedServerOwnedPreset(t *testing.T) {
 	if records[1].Notes != model.NoteNoAnswerNotNXDOMAIN {
 		t.Fatalf("no-answer note = %q", records[1].Notes)
 	}
-	if fake.CallCount() != 1 {
-		t.Fatalf("runner calls = %d", fake.CallCount())
+	if fake.CallCount() != 2 {
+		t.Fatalf("runner calls = %d (preset + wildcard canary)", fake.CallCount())
+	}
+	if strings.Contains(records[0].Notes, model.NoteWildcardSuspected) {
+		t.Fatalf("clean canary must not add a wildcard note: %q", records[0].Notes)
+	}
+	if got := len(strings.Split(strings.TrimSpace(fake.Calls[1].Stdin), "\n")); got != 3 {
+		t.Fatalf("wildcard canary probed %d labels, want 3", got)
 	}
 	joined := strings.Join(fake.Calls[0].Args, " ")
 	for _, want := range []string{"-d " + testRoot, "-w ", "-retry 1", "-timeout 3s", "-t 10", "-rl 10", "-duc"} {
@@ -198,6 +208,37 @@ func TestExternalBruteforceUsesBoundedServerOwnedPreset(t *testing.T) {
 	}
 	if _, err := os.Stat(wordlistPath); err != nil {
 		t.Fatalf("adapter removed a caller-owned managed wordlist: %v", err)
+	}
+}
+
+func TestExternalBruteforceTagsWildcardSuspectedWhenCanaryAnswers(t *testing.T) {
+	managedDir := t.TempDir()
+	providedWordlist := filepath.Join(managedDir, "wordlist-preset-small-canary.txt")
+	if err := os.WriteFile(providedWordlist, []byte("api\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ext, fake := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) {
+		if strings.HasPrefix(spec.Stdin, "wld-") {
+			first := strings.Split(strings.TrimSpace(spec.Stdin), "\n")[0]
+			return []byte(`{"host":"` + first + `.` + testRoot + `","a":["203.0.113.9"]}` + "\n"), nil, nil
+		}
+		return []byte("{\"host\":\"api." + testRoot + "\",\"a\":[\"192.0.2.10\"]}\n"), nil, nil
+	})
+	records, err := ext.Bruteforce(context.Background(), backend.BruteforceRequest{
+		RunID: "run", Root: testRoot, Preset: "preset-small", MaxWords: 1,
+		Words: []string{"api"}, WordlistPath: providedWordlist, Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Status != model.StatusResolved {
+		t.Fatalf("records = %+v", records)
+	}
+	if !strings.Contains(records[0].Notes, model.NoteWildcardSuspected) {
+		t.Fatalf("wildcard-suspected note missing: %q", records[0].Notes)
+	}
+	if fake.CallCount() != 2 {
+		t.Fatalf("runner calls = %d, want preset + canary", fake.CallCount())
 	}
 }
 
@@ -401,8 +442,14 @@ func TestResolveSalvagesPartialOutputOnTimeout(t *testing.T) {
 	if byHost["www."+testRoot].Status != model.StatusResolved {
 		t.Fatalf("www status=%s", byHost["www."+testRoot].Status)
 	}
-	if byHost["api."+testRoot].Status != model.StatusNoAnswer || !strings.Contains(byHost["api."+testRoot].Notes, "NXDOMAIN") {
+	if byHost["api."+testRoot].Status != model.StatusNoAnswer || !strings.Contains(byHost["api."+testRoot].Notes, "resolver reported NXDOMAIN") {
 		t.Fatalf("api nx=%+v", byHost["api."+testRoot])
+	}
+	if strings.Contains(byHost["mail."+testRoot].Notes, model.NoteCallTimedOut) {
+		t.Fatalf("unobserved timeout record must keep its actionable note, got %q", byHost["mail."+testRoot].Notes)
+	}
+	if !strings.Contains(byHost["www."+testRoot].Notes, model.NoteCallTimedOut) {
+		t.Fatalf("observed record should note the call reached its limit, got %q", byHost["www."+testRoot].Notes)
 	}
 	if byHost["mail."+testRoot].Status != model.StatusTimeout {
 		t.Fatalf("mail status=%s note=%q", byHost["mail."+testRoot].Status, byHost["mail."+testRoot].Notes)
@@ -445,5 +492,35 @@ func TestDNSXStatusCodeMapping(t *testing.T) {
 	st, note := dnsxStatusFromObservation(r, false)
 	if st != model.StatusNoAnswer || !strings.Contains(note, "NXDOMAIN") {
 		t.Fatalf("status=%s note=%q", st, note)
+	}
+}
+
+func TestResolveTimeoutSalvagesOnlyTruncatedFinalLine(t *testing.T) {
+	good := `{"host":"api.` + testRoot + `","cname":["target.example.net"]}` + "\n"
+	for _, tc := range []struct {
+		name, output string
+		wantErr      bool
+	}{
+		{"truncated final", good + `{"host":"bad`, false},
+		{"malformed complete", "not-json\n" + good + `{"host":"bad`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ext, _ := testExternal(t, func(ExecSpec) ([]byte, []byte, error) { return []byte(tc.output), nil, context.DeadlineExceeded })
+			records, err := ext.Resolve(context.Background(), backend.ResolveRequest{RunID: "run", Root: testRoot, Hosts: []string{"api." + testRoot, "www." + testRoot}, MaxHosts: 2, Timeout: time.Minute})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("records=%+v err=%v", records, err)
+			}
+			if err == nil && (records[0].Status != model.StatusResolved || records[0].ObservedDNSRecords["CNAME"][0] != "target.example.net" || records[1].Status != model.StatusTimeout) {
+				t.Fatalf("unexpected partial records: %+v", records)
+			}
+		})
+	}
+}
+
+func TestResolveCancellationIsNotReportedAsTimeout(t *testing.T) {
+	ext, _ := testExternal(t, func(ExecSpec) ([]byte, []byte, error) { return nil, nil, context.Canceled })
+	_, err := ext.Resolve(context.Background(), backend.ResolveRequest{RunID: "run", Root: testRoot, Hosts: []string{"api." + testRoot}, MaxHosts: 1, Timeout: time.Minute})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
 	}
 }

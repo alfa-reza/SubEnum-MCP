@@ -29,13 +29,15 @@ func (a *App) Register(srv *mcp.Server) {
 		Name: "bruteforce_subdomains",
 		Description: "Check only a registered preset wordlist against the pinned scope using the hash-verified dnsx backend. " +
 			"Only registered presets are accepted (arbitrary paths rejected); the wordlist is server-owned and bounded. " +
+			"When any DNS answer appears, three random-label wildcard canaries are probed; if those also resolve, results carry a wildcard-suspected note. " +
 			"Absent answers are no_answer, never a conclusion of NXDOMAIN.",
 	}, a.handleBruteforce)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "resolve_hosts",
 		Description: "Resolve in-scope subdomains using the hash-verified dnsx backend with fixed rate/thread/retry/query settings. " +
-			"For large batches set timeout_seconds explicitly (up to 300) and paginate stored hosts with host_offset/host_limit (or split explicit host lists). " +
+			"Requests over 500 hosts run as sequential bounded batches with MCP progress notifications and persisted results after every batch; timeout_seconds applies per batch (max 300s). " +
+			"For large batches also paginate stored hosts with host_offset/host_limit (or split explicit host lists). " +
 			"Out-of-scope/malformed inputs are rejected before a backend call; empty answers become no_answer, never NXDOMAIN.",
 	}, a.handleResolve)
 

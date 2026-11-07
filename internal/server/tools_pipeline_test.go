@@ -338,7 +338,7 @@ func TestPipelineFailuresDoNotCreateRuns(t *testing.T) {
 
 func TestResolveStoredHostsBatches(t *testing.T) {
 	session, app := connectInProcess(t, testConfig(t, nil))
-	run, err := app.Store().CreateRun()
+	run, err := app.Store().CreateRun(true)
 	if err != nil {
 		t.Fatal(err)
 	}

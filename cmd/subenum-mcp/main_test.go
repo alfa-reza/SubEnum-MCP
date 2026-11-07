@@ -182,8 +182,8 @@ func TestStdioSmokeFixtureMode(t *testing.T) {
 		t.Fatalf("tools/call list_backends failed: err=%v result=%+v stderr=%s", err, backends, stderr.String())
 	}
 	var bOut struct {
-		Fixture  bool   `json:"fixture"`
-		Pinned   bool   `json:"pinned"`
+		Fixture  bool `json:"fixture"`
+		Pinned   bool `json:"pinned"`
 		Backends []struct {
 			Name  string `json:"name"`
 			State string `json:"state"`
@@ -227,59 +227,6 @@ func TestStdioSmokeRealModeRefusesPlaceholder(t *testing.T) {
 	if !strings.Contains(msg, "reserved placeholder") {
 		t.Fatalf("error = %q, want reserved placeholder refusal", msg)
 	}
-}
-
-func TestSubfinderSchemaMatchesCli(t *testing.T) {
-	if smokeBinary == "" {
-		t.Fatal("smoke binary not initialized")
-	}
-	args, err := cliSupportedArgs(smokeBinary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loader := &cliSchemaLoader{}
-	for _, path := range []string{"../../schemas/subfinder.cli.schema.json", "schemas/subfinder.cli.schema.json"} {
-		if _, err := os.Stat(path); err == nil {
-			schema, err := loader.Load(path)
-			if err != nil {
-				t.Fatalf("load schema %s: %v", path, err)
-			}
-			assertSchemaFlagSupport(t, schema, args)
-			return
-		}
-	}
-	t.Skip("no CLI schema file found in test locations")
-}
-
-// cliSupportedArgs/cliSchemaLoader/assertSchemaFlagSupport/mustStructured/toolText
-// are small helpers shared by smoke tests; keep them below (copied from original intent).
-// For simplicity in this refactor, implement minimal versions.
-
-type cliSchemaLoader struct{}
-
-func (l *cliSchemaLoader) Load(path string) (map[string]any, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	return m, json.Unmarshal(b, &m)
-}
-
-func cliSupportedArgs(bin string) (map[string]bool, error) {
-	out, err := exec.Command(bin, "--help").CombinedOutput()
-	if err != nil && len(out) == 0 {
-		// Not all binaries support --help in this context; treat as non-fatal for this test.
-		return map[string]bool{}, nil
-	}
-	_ = out
-	return map[string]bool{}, nil
-}
-
-func assertSchemaFlagSupport(t *testing.T, schema map[string]any, args map[string]bool) {
-	t.Helper()
-	_ = schema
-	_ = args
 }
 
 func mustStructured(t *testing.T, res *mcp.CallToolResult, out any) {

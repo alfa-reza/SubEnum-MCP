@@ -19,13 +19,17 @@ type DiscoverIn struct {
 }
 
 type DiscoverOut struct {
-	RunID   string          `json:"run_id"`
-	Root    string          `json:"root"`
-	Mode    string          `json:"mode"`
-	Fixture bool            `json:"fixture"`
-	Count   int             `json:"count"`
-	Records []*model.Record `json:"records"`
-	Backend backend.Info    `json:"backend"`
+	RunID          string          `json:"run_id"`
+	Root           string          `json:"root"`
+	Mode           string          `json:"mode"`
+	Fixture        bool            `json:"fixture"`
+	Count          int             `json:"count"`
+	Records        []*model.Record `json:"records"`
+	Backend        backend.Info    `json:"backend"`
+	CapReached     bool            `json:"cap_reached" jsonschema:"whether returned unique names reached the requested cap; completeness remains unknown"`
+	Warning        string          `json:"warning,omitempty"`
+	MaxRecords     int             `json:"max_records"`
+	TimeoutSeconds int             `json:"timeout_seconds"`
 }
 
 func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in DiscoverIn) (*mcp.CallToolResult, DiscoverOut, error) {
@@ -71,14 +75,22 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 	if a.fixtureMode() {
 		mode = "fixture"
 	}
+	warning := "passive discovery is not guaranteed complete"
+	if len(records) >= maxRecords {
+		warning = "requested cap reached; results may be truncated and passive discovery is not guaranteed complete"
+	}
 	return nil, DiscoverOut{
-		RunID:   run.ID,
-		Root:    a.Root(),
-		Mode:    mode,
-		Fixture: a.fixtureMode(),
-		Count:   len(stored),
-		Records: sampleRecords(stored),
-		Backend: a.backendInfo("subfinder", backend.KindPassive),
+		RunID:          run.ID,
+		Root:           a.Root(),
+		Mode:           mode,
+		Fixture:        a.fixtureMode(),
+		Count:          len(stored),
+		Records:        sampleRecords(stored),
+		Backend:        a.backendInfo("subfinder", backend.KindPassive),
+		CapReached:     len(records) >= maxRecords,
+		Warning:        warning,
+		MaxRecords:     maxRecords,
+		TimeoutSeconds: int(timeout.Seconds()),
 	}, nil
 }
 
@@ -104,6 +116,7 @@ type GenerateOut struct {
 	SeedTotal      int             `json:"seed_total,omitempty"`
 	SeedOffset     int             `json:"seed_offset,omitempty"`
 	SeedNextOffset *int            `json:"seed_next_offset,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"timeout applied to the generation call"`
 }
 
 func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolRequest, in GenerateIn) (*mcp.CallToolResult, GenerateOut, error) {
@@ -195,6 +208,7 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		SeedTotal:      len(allSeeds),
 		SeedOffset:     seedOffset,
 		SeedNextOffset: next,
+		TimeoutSeconds: effectiveTimeoutSeconds(timeout),
 	}, nil
 }
 

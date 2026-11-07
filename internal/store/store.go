@@ -74,6 +74,10 @@ type Run struct {
 	ID        string
 	CreatedAt time.Time
 	ScopeRoot string
+	// Fixture is the persisted mode; ModeKnown is true when the record has
+	// one. Legacy runs before this field have ModeKnown=false.
+	Fixture   bool
+	ModeKnown bool
 
 	mu      sync.Mutex
 	records map[string]*model.Record
@@ -86,6 +90,9 @@ type runMetadata struct {
 	RunID     string    `json:"run_id"`
 	ScopeRoot string    `json:"scope_root"`
 	CreatedAt time.Time `json:"created_at"`
+	// Fixture is nil in run metadata written before mode persistence; those
+	// runs are legacy runs whose mode is inferred from recorded provenance.
+	Fixture *bool `json:"fixture,omitempty"`
 }
 
 func Open(dir string, root ...string) (*Store, error) {
@@ -215,7 +222,7 @@ func (s *Store) load() error {
 		if meta.RunID != e.Name() || storedRoot != s.scopeRoot {
 			return fmt.Errorf("run %s is bound to scope root %q, but server data directory is opened for %q; use a separate data directory per root", e.Name(), storedRoot, s.scopeRoot)
 		}
-		run := &Run{ID: e.Name(), CreatedAt: meta.CreatedAt, ScopeRoot: storedRoot, records: map[string]*model.Record{}, path: filepath.Join(runDir, "records.jsonl"), rel: filepath.Join("runs", e.Name(), "records.jsonl"), root: s.root}
+		run := &Run{ID: e.Name(), CreatedAt: meta.CreatedAt, ScopeRoot: storedRoot, ModeKnown: meta.Fixture != nil, Fixture: meta.Fixture != nil && *meta.Fixture, records: map[string]*model.Record{}, path: filepath.Join(runDir, "records.jsonl"), rel: filepath.Join("runs", e.Name(), "records.jsonl"), root: s.root}
 		ct, err := runTimeFromID(e.Name())
 		if err != nil {
 			continue
@@ -238,6 +245,65 @@ func (s *Store) load() error {
 	})
 	return nil
 }
+
+// SetMode persists the fixture/real mode of a run. Used to adopt legacy runs
+// that predate mode persistence; the run must still be empty at that point.
+// droppedEmptyLocked reports whether there are no out-of-scope records;
+// r.mu must be held.
+func (r *Run) droppedEmptyLocked() bool {
+	for _, rec := range r.records {
+		if !rec.InScope {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Run) SetMode(fixture bool) error {
+	r.mu.Lock()
+	if len(r.records) != 0 || !r.droppedEmptyLocked() {
+		r.mu.Unlock()
+		return fmt.Errorf("run %s already has records; its legacy mode cannot be persisted", r.ID)
+	}
+	r.mu.Unlock()
+	metaPath := strings.TrimSuffix(r.rel, "records.jsonl") + "meta.json"
+	b, err := rootReadFile(r.root, metaPath)
+	if err != nil {
+		return fmt.Errorf("read run metadata: %w", err)
+	}
+	var meta runMetadata
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return fmt.Errorf("run %s metadata is not valid JSON: %w", r.ID, err)
+	}
+	if meta.RunID != r.ID {
+		return fmt.Errorf("run %s metadata run_id mismatch", r.ID)
+	}
+	if meta.Fixture != nil {
+		return fmt.Errorf("run %s already has a persisted mode", r.ID)
+	}
+	meta.Fixture = boolPtr(fixture)
+	out, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	f, err := rootOpenFile(r.root, metaPath, os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		return fmt.Errorf("open run metadata for mode adoption: %w", err)
+	}
+	if _, writeErr := f.Write(out); writeErr != nil {
+		f.Close()
+		return fmt.Errorf("write run metadata: %w", writeErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		return fmt.Errorf("close run metadata: %w", closeErr)
+	}
+	r.Fixture = fixture
+	r.ModeKnown = true
+	return nil
+}
+
+func boolPtr(v bool) *bool { return &v }
 
 func runTimeFromID(id string) (time.Time, error) {
 	// id = r + YYYYMMDDhhmmss + "-" + rand8
@@ -273,8 +339,9 @@ func ensureRootDir(root *os.Root, rel string) error {
 	return checkRootPath(root, rel)
 }
 
-// CreateRun creates a new run and its backing file.
-func (s *Store) CreateRun() (*Run, error) {
+// CreateRun creates a new run and its backing file. The mode is persisted so
+// later access from the other fixture/real mode is rejected.
+func (s *Store) CreateRun(fixture bool) (*Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.runs) >= MaxRuns {
@@ -317,8 +384,8 @@ func (s *Store) CreateRun() (*Run, error) {
 	if err := f.Close(); err != nil {
 		return nil, cleanup(err)
 	}
-	run := &Run{ID: id, CreatedAt: now, ScopeRoot: s.scopeRoot, records: map[string]*model.Record{}, path: recPath, rel: relRec, root: s.root}
-	metaBytes, err := json.Marshal(runMetadata{RunID: id, ScopeRoot: s.scopeRoot, CreatedAt: now})
+	run := &Run{ID: id, CreatedAt: now, ScopeRoot: s.scopeRoot, ModeKnown: true, Fixture: fixture, records: map[string]*model.Record{}, path: recPath, rel: relRec, root: s.root}
+	metaBytes, err := json.Marshal(runMetadata{RunID: id, ScopeRoot: s.scopeRoot, CreatedAt: now, Fixture: boolPtr(fixture)})
 	if err != nil {
 		return nil, cleanup(err)
 	}

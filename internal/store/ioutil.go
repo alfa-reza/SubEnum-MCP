@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -85,4 +86,17 @@ func rootReadDir(root *os.Root, rel string) ([]fs.DirEntry, error) {
 	}
 	defer f.Close()
 	return f.ReadDir(-1)
+}
+
+// rootReadFile reads a small file through the managed root.
+func rootReadFile(root *os.Root, rel string) ([]byte, error) {
+	if err := checkRootPath(root, rel); err != nil {
+		return nil, err
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }

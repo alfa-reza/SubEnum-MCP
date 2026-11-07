@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +12,89 @@ import (
 	"github.com/alfa-reza/SubEnum-MCP/internal/adapters"
 	"github.com/alfa-reza/SubEnum-MCP/internal/model"
 )
+
+func TestResolveHostsRunsInBoundedInternalBatches(t *testing.T) {
+	root := "corp.customer-example.net"
+	cfg := testConfig(t, func(c *Config) {
+		c.ScopeRoot = root
+		c.Fixture = false
+		c.Backend.SubfinderBin = "/fake/subfinder"
+		c.Backend.DnsxBin = "/fake/dnsx"
+		c.Backend.AlterxBin = "/fake/alterx"
+	})
+	session, app := connectInProcess(t, cfg)
+	app.verifyPinnedBinary = func(name, path string) (adapters.PinnedTool, string, error) {
+		return adapters.PinnedTool{Name: name}, "digest", nil
+	}
+	calls := 0
+	maxStdin := 0
+	fake := &adapters.FakeRunner{Fn: func(spec adapters.ExecSpec) ([]byte, []byte, error) {
+		calls++
+		if n := len(spec.Stdin); n > maxStdin {
+			maxStdin = n
+		}
+		var b strings.Builder
+		for _, host := range strings.Split(strings.TrimSpace(spec.Stdin), "\n") {
+			b.WriteString(`{"host":"` + host + `","status_code":"NOERROR"}` + "\n")
+		}
+		return []byte(b.String()), nil, nil
+	}}
+	var err error
+	app.external, err = adapters.NewExternalBackends(app.scope, app.builder, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := make([]string, 0, 1100)
+	for i := 0; i < 1100; i++ {
+		hosts = append(hosts, fmt.Sprintf("h%d.%s", i, root))
+	}
+	var out ResolveOut
+	mustJSON(t, callTool(t, session, "resolve_hosts", map[string]any{"hosts": hosts, "timeout_seconds": 60}), &out)
+	if out.Accepted != 1100 || out.StatusCounts["no_answer"] != 1100 || out.TimeoutSeconds != 60 {
+		t.Fatalf("chunked resolve output = %+v", out)
+	}
+	if len(out.Records) > 20 {
+		t.Fatalf("chunked resolve returned %d sampled records, want at most 20", len(out.Records))
+	}
+	if calls != 3 || maxStdin > 500*40 {
+		t.Fatalf("expected 3 bounded chunks (500/500/100), got %d calls, max stdin bytes=%d", calls, maxStdin)
+	}
+}
+
+func TestResolveReportsCurrentTimeoutDespiteEarlierSuccess(t *testing.T) {
+	root := "corp.customer-example.net"
+	cfg := testConfig(t, func(c *Config) {
+		c.ScopeRoot = root
+		c.Fixture = false
+		c.Backend.SubfinderBin = "/fake/subfinder"
+		c.Backend.DnsxBin = "/fake/dnsx"
+		c.Backend.AlterxBin = "/fake/alterx"
+	})
+	session, app := connectInProcess(t, cfg)
+	app.verifyPinnedBinary = func(name, path string) (adapters.PinnedTool, string, error) {
+		return adapters.PinnedTool{Name: name}, "digest", nil
+	}
+	n := 0
+	fake := &adapters.FakeRunner{Fn: func(spec adapters.ExecSpec) ([]byte, []byte, error) {
+		n++
+		if n == 1 {
+			return []byte(`{"host":"api.` + root + `","a":["192.0.2.1"]}` + "\n"), nil, nil
+		}
+		return nil, nil, context.DeadlineExceeded
+	}}
+	var err error
+	app.external, err = adapters.NewExternalBackends(app.scope, app.builder, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{"hosts": []string{"api." + root}}
+	callTool(t, session, "resolve_hosts", input)
+	var out ResolveOut
+	mustJSON(t, callTool(t, session, "resolve_hosts", input), &out)
+	if out.StatusCounts["timeout"] != 1 || out.Warning == "" || out.Records[0].Status != model.StatusResolved {
+		t.Fatalf("latest timeout must remain visible alongside historical status: %+v", out)
+	}
+}
 
 func TestRealToolsDispatchThroughMCPWithOfflineFakes(t *testing.T) {
 	root := "corp.customer-example.net"
@@ -44,6 +129,9 @@ func TestRealToolsDispatchThroughMCPWithOfflineFakes(t *testing.T) {
 				if arg == "-w" && i+1 < len(spec.Args) {
 					return []byte("{\"host\":\"api." + root + "\",\"a\":[\"192.0.2.12\"]}\n"), nil, nil
 				}
+			}
+			if strings.HasPrefix(spec.Stdin, "wld-") {
+				return nil, nil, nil // wildcard canary: no answer
 			}
 			if spec.Stdin == "api."+root+"\n" {
 				return []byte("{\"host\":\"api." + root + "\",\"a\":[\"192.0.2.12\"]}\n"), nil, nil
@@ -96,10 +184,10 @@ func TestRealToolsDispatchThroughMCPWithOfflineFakes(t *testing.T) {
 	if brute.Mode != "real" || brute.Fixture || brute.WordsQueried != 2 {
 		t.Fatalf("real brute-force output = %+v", brute)
 	}
-	if len(seen) != 4 {
-		t.Fatalf("runner calls=%d, want 4: %+v", len(seen), seen)
+	if len(seen) != 5 {
+		t.Fatalf("runner calls=%d, want 5 (subfinder, alterx, dnsx preset, dnsx resolve, dnsx canary): %+v", len(seen), seen)
 	}
-	want := []string{"subfinder", "alterx", "dnsx", "dnsx"}
+	want := []string{"subfinder", "alterx", "dnsx", "dnsx", "dnsx"}
 	for i, spec := range seen {
 		if spec.PinnedBackend != want[i] || spec.Timeout != 10*time.Second {
 			t.Fatalf("runner call %d = %+v", i, spec)

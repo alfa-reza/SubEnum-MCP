@@ -16,7 +16,7 @@ import (
 
 func seededRun(t *testing.T, s *Store) *Run {
 	t.Helper()
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestExportJSONL(t *testing.T) {
 
 func TestExportCSVFormulaInjectionDefense(t *testing.T) {
 	s := newTestStore(t)
-	run, _ := s.CreateRun()
+	run, _ := s.CreateRun(false)
 	payloads := []string{"=cmd|'/c calc'!A1", "+SUM(A1:A2)", "-1", "@SUM(1)", "\tTAB", "\rCR"}
 	for i, p := range payloads {
 		r := rec(run.ID, "x.example.com", "candidate", true, "")
@@ -227,7 +227,7 @@ func TestExportManifestFailureCleansCreatedDataFile(t *testing.T) {
 
 func TestExportEnforcesByteCap(t *testing.T) {
 	s := newTestStore(t)
-	run, err := s.CreateRun()
+	run, err := s.CreateRun(false)
 	if err != nil {
 		t.Fatal(err)
 	}
