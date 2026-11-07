@@ -241,6 +241,29 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestReopenRejectsMissingRecords(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.CreateRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(run.Path()); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(dir, "example.com")
+	if err == nil {
+		reopened.Close()
+		t.Fatal("missing records file was accepted")
+	}
+}
+
 func TestOpeningDataDirWithDifferentScopeIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir, "example.com")

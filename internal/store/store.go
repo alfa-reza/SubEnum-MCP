@@ -388,10 +388,7 @@ func (s *Store) Runs() []*Run {
 func (r *Run) loadFile() error {
 	f, err := rootOpenFile(r.root, r.rel, os.O_RDONLY)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+		return fmt.Errorf("open records for run %s: %w", r.ID, err)
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -494,7 +491,7 @@ func cloneRecord(rec *model.Record) *model.Record {
 }
 
 func (r *Run) append(rec *model.Record) error {
-	f, err := rootOpenFile(r.root, r.rel, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
+	f, err := rootOpenFile(r.root, r.rel, os.O_WRONLY|os.O_APPEND)
 	if err != nil {
 		return err
 	}
