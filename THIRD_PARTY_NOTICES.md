@@ -1,12 +1,6 @@
-# THIRD_PARTY_NOTICES
+# Third-party notices
 
 This document inventories the licenses of third-party components included in the runtime binary, pinned external backends that are not packaged, GitHub Actions referenced by the workflow, and preset data embedded in the binary. Runtime license texts below are reproduced from the upstream LICENSE files for the specified versions/refs.
-
-## What the MIT License Requires
-
-The official MIT License text states: “The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.” Thus, when an MIT-licensed component is distributed as part of the binary, its copyright notice and permission notice must be retained. The MIT License does not require a specific filename; `THIRD_PARTY_NOTICES.md` is a practical way to carry these notices. See [Open Source Initiative — MIT License](https://opensource.org/license/mit).
-
-For the BSD licenses below, binary redistribution terms also require the copyright notice, list of conditions, and disclaimer to be retained in the documentation and/or other materials provided with the distribution. See each license text below for the exact terms.
 
 ## Go Modules Included in the Binary Dependency Graph
 
