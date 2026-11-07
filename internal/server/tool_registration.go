@@ -122,11 +122,15 @@ func applyToolInputConstraints(toolName string, schema *jsonschema.Schema) {
 		setBounds("max_records", 1, CapMaxRecordsPerCall)
 	case "generate_candidates":
 		setBounds("max_candidates", 1, CapMaxCandidates)
+		setMinimum("seed_offset", 0)
+		setBounds("seed_limit", 1, CapMaxSeedHosts)
 	case "bruteforce_subdomains":
 		setBounds("max_words", 1, CapMaxBruteforceWords)
 		setEnum("wordlist", "", "preset-small")
 	case "resolve_hosts":
 		setBounds("max_hosts", 1, CapMaxResolveHosts)
+		setMinimum("host_offset", 0)
+		setBounds("host_limit", 1, CapMaxResolveHosts)
 		hosts := schema.Properties["hosts"]
 		if hosts == nil {
 			panic("resolve_hosts input schema has no hosts property")

@@ -80,17 +80,17 @@ Tool input is structured: there are no parameters for commands, shells, binary p
 |---|---|---|
 | `start_run` | Creates a new empty run | Use before switching between fixture and external modes |
 | `discover_subdomains` | Candidates from fixtures or passive Subfinder | `max_records` 1–5,000; timeout `0`/empty uses the 120-second default, otherwise 1–300 seconds; Subfinder rate 5 HTTP requests/second, source timeout 10 seconds, max runtime 5 minutes |
-| `generate_candidates` | Local permutations of in-scope hostnames in a run | At most 2,000 seeds; `max_candidates` 1–5,000; AlterX output cap 16 MB |
+| `generate_candidates` | Local permutations of in-scope hostnames in a run | Seeds come from stored in-scope hosts and are processed in bounded batches with `seed_offset`/`seed_limit` (1–2,000 per call); `max_candidates` 1–5,000; AlterX output cap 16 MB. |
 | `bruteforce_subdomains` | Checks the registered `preset-small` preset (an empty `wordlist` selects this preset) | `max_words` 1–1,000; external wordlist is created under `<data_dir>/work/` and removed after the call; dnsx uses 10 threads, dnsx `-rl 10` per process (not a global DNS-query cap), one attempt, 3-second query timeout |
-| `resolve_hosts` | Resolves in-scope hostnames | At most 2,000 input elements and 2,000 accepted hosts; `max_hosts` 1–2,000; dnsx uses 10 threads, dnsx `-rl 10` per process (not a global DNS-query cap), one attempt, 3-second query timeout |
+| `resolve_hosts` | Resolves in-scope hostnames | Explicit `hosts` input: at most 2,000 elements and 2,000 accepted hosts. Omit `hosts` to resolve stored run hosts in bounded batches with `host_offset`/`host_limit`; `max_hosts` 1–2,000 caps each call. dnsx uses 10 threads, dnsx `-rl 10` per process (not a global DNS-query cap across processes), one attempt, 3-second query timeout. |
 | `get_results` | Paginates results by run and filters by status | `page` minimum 1; `page_size` 1–1,000 (default 100); status is limited to the supported enum |
 | `list_backends` | Fixture, binary pin, license, and gate status | Read-only diagnostics |
 | `doctor` | Local scope/data-directory/gate diagnostics | Does not run a backend or send traffic; creates and removes a unique probe through the already-open data root |
 | `export_results` | JSONL/CSV in a managed folder | `jsonl` or `csv` format; maximum 100,000 rows and 64 MiB; CSV is hardened against formula injection |
 
-Discovery, generation, brute-force and resolution responses include at most 20 records as a sample. Use `get_results` for paginated results. Runs reject mixing fixture and external observations; use `start_run` when changing modes. Existing mixed runs cannot accept new observations.
+Discovery, generation, brute-force and resolution responses include at most 20 records as a sample. Use `get_results` for paginated stored results. When `hosts` is omitted, `resolve_hosts` and `generate_candidates` report batch progress (`host_*`/`seed_*` fields) so large runs can be processed without sending all names through model context. Runs reject mixing fixture and external observations; use `start_run` when changing modes. Existing mixed runs cannot accept new observations.
 
-DNS wildcard answers are not detected or labelled; a resolved name may match a wildcard.
+Wildcard DNS detection is not implemented in v1.0.0. A `resolved` result can be a wildcard answer and does not by itself prove that the specific name exists independently; validate important findings separately.
 
 All external output is reclassified against the root; the apex, invalid formats, and non-matching suffixes are discarded. Rejected resolve inputs are recorded as rejected-at-intake and are never sent to a backend, included in pagination, or exported. If all resolve inputs are rejected and there is no existing run, the call fails without creating one; if a selected or latest run exists, the rejection is recorded there. Each run's data is bound to the root used when it was created.
 

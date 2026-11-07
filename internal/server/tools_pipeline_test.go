@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alfa-reza/SubEnum-MCP/internal/model"
 )
@@ -329,4 +331,29 @@ func TestPipelineFailuresDoNotCreateRuns(t *testing.T) {
 			t.Fatalf("candidate generation without seeds created %d runs", got)
 		}
 	})
+}
+
+func TestResolveStoredHostsBatches(t *testing.T) {
+	session, app := connectInProcess(t, testConfig(t, nil))
+	run, err := app.Store().CreateRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		_, err := run.Upsert(&model.Record{RunID: run.ID, Host: fmt.Sprintf("h%d.example.com", i), Status: model.StatusCandidate, Provenance: []model.Provenance{{Backend: "mock.test", Method: model.MethodPassive, Fixture: true}}, ObservedAt: time.Now().UTC(), InScope: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := callTool(t, session, "resolve_hosts", map[string]any{"run_id": run.ID, "host_offset": 0, "host_limit": 2})
+	var out ResolveOut
+	mustJSON(t, raw, &out)
+	if out.HostTotal != 5 || out.HostBatch != 2 || out.HostOffset != 0 || out.HostNextOffset == nil || *out.HostNextOffset != 2 || out.Accepted != 2 {
+		t.Fatalf("batch1 = %+v", out)
+	}
+	raw = callTool(t, session, "resolve_hosts", map[string]any{"run_id": run.ID, "host_offset": *out.HostNextOffset, "host_limit": 2})
+	mustJSON(t, raw, &out)
+	if out.HostBatch != 2 || *out.HostNextOffset != 4 {
+		t.Fatalf("batch2 = %+v", out)
+	}
 }
