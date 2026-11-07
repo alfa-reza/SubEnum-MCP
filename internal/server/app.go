@@ -50,7 +50,7 @@ func NewApp(cfg *Config, logger *slog.Logger) (*App, error) {
 		return nil, err
 	}
 	src := mock.New(sc.Root())
-	builder := adapters.NewBuilder(sc.Root(), cfg.External.SubfinderBin, cfg.External.DnsxBin, cfg.External.AlterxBin)
+	builder := adapters.NewBuilder(sc.Root(), cfg.External.SubfinderBin, cfg.External.DnsxBin, cfg.External.AlterxBin).WithDnsxResolvers(cfg.External.DnsxResolvers)
 	runner := adapters.ExecRunner{}
 	external, err := adapters.NewExternalBackends(sc, builder, runner)
 	if err != nil {

@@ -25,14 +25,87 @@ const (
 // data (the configured root, hostnames, bounded counts and managed file path).
 // No tool accepts a shell command, arbitrary flag, resolver or file path.
 type Builder struct {
-	SubfinderBin string
-	DnsxBin      string
-	AlterxBin    string
-	Root         string
+	SubfinderBin  string
+	DnsxBin       string
+	AlterxBin     string
+	DnsxResolvers string
+	Root          string
 }
 
 func NewBuilder(root, subfinder, dnsx, alterx string) *Builder {
-	return &Builder{SubfinderBin: subfinder, DnsxBin: dnsx, AlterxBin: alterx, Root: root}
+	return &Builder{SubfinderBin: subfinder, DnsxBin: dnsx, AlterxBin: alterx, DnsxResolvers: "", Root: root}
+}
+
+// WithDnsxResolvers configures the optional operator-provided resolver list
+// appended to dnsx as `-r`. Empty keeps dnsx's built-in defaults.
+func (b *Builder) WithDnsxResolvers(resolvers string) *Builder {
+	b.DnsxResolvers = strings.TrimSpace(resolvers)
+	return b
+}
+
+// validateDnsxResolvers accepts only a comma-separated list of optional
+// tcp:/udp: scheme + IPv4 addresses with optional port. Anything else is
+// rejected: no arbitrary file paths, URLs, or shell metacharacters.
+func validateDnsxResolvers(resolvers string) error {
+	if strings.TrimSpace(resolvers) == "" {
+		return nil
+	}
+	for _, item := range strings.Split(resolvers, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return fmt.Errorf("dnsx resolver list contains an empty entry")
+		}
+		scheme := ""
+		if schemePart, rest, ok := strings.Cut(item, ":"); ok {
+			switch schemePart {
+			case "tcp", "udp":
+				scheme = schemePart
+				item = rest
+			default:
+				return fmt.Errorf("dnsx resolver entry %q uses an unsupported scheme (allowed: tcp:, udp:, or plain IPv4)", schemePart)
+			}
+		}
+		ipPort := strings.Split(item, ":")
+		if len(ipPort) > 2 {
+			return fmt.Errorf("dnsx resolver entry %q is not a valid IPv4[:port] pair", item)
+		}
+		octets := strings.Split(ipPort[0], ".")
+		if len(octets) != 4 {
+			return fmt.Errorf("dnsx resolver entry %q is not an IPv4 address", ipPort[0])
+		}
+		for _, o := range octets {
+			if o == "" || len(o) > 3 {
+				return fmt.Errorf("dnsx resolver entry %q contains an invalid IPv4 octet", ipPort[0])
+			}
+			for _, ch := range o {
+				if ch < '0' || ch > '9' {
+					return fmt.Errorf("dnsx resolver entry %q contains non-digit characters", ipPort[0])
+				}
+			}
+		}
+		if len(ipPort) == 2 && (len(ipPort[1]) > 5 || ipPort[1] == "") {
+			return fmt.Errorf("dnsx resolver entry %q has an invalid port", item)
+		}
+		if scheme != "" {
+			scheme = scheme + ":"
+		}
+		item = scheme + item
+		if strings.ContainsAny(item, ";|&`$\\\"'\n\r\t ") {
+			return fmt.Errorf("dnsx resolver entry %q contains forbidden characters", item)
+		}
+	}
+	return nil
+}
+
+// resolverArgs returns `-r <list>` when an operator resolver list is set.
+func (b *Builder) resolverArgs() ([]string, error) {
+	if strings.TrimSpace(b.DnsxResolvers) == "" {
+		return nil, nil
+	}
+	if err := validateDnsxResolvers(b.DnsxResolvers); err != nil {
+		return nil, fmt.Errorf("rejecting invalid dnsx resolver configuration: %w", err)
+	}
+	return []string{"-r", b.DnsxResolvers}, nil
 }
 
 func (b *Builder) require(bin, name string) error {
@@ -176,17 +249,23 @@ func (b *Builder) BuildDNSXBruteforceBounded(wordlistPath string, policy scope.P
 	if err := scope.ValidateHostname(root, policy); err != nil {
 		return ExecSpec{}, err
 	}
+	resolverArgs, err := b.resolverArgs()
+	if err != nil {
+		return ExecSpec{}, err
+	}
+	args := []string{
+		"-d", root, "-w", wordlistPath, "-silent", "-json", "-omit-raw",
+		"-a", "-aaaa", "-cname", "-resp", "-retry", strconv.Itoa(DNSXRetry),
+		"-timeout", DNSXQueryTimeout, "-t", strconv.Itoa(DNSXThreads),
+		"-rl", strconv.Itoa(DNSXRateLimit), "-duc",
+	}
+	args = append(args, resolverArgs...)
 	return ExecSpec{
 		Binary:        b.DnsxBin,
 		PinnedBackend: "dnsx",
-		Args: []string{
-			"-d", root, "-w", wordlistPath, "-silent", "-json", "-omit-raw",
-			"-a", "-aaaa", "-cname", "-resp", "-retry", strconv.Itoa(DNSXRetry),
-			"-timeout", DNSXQueryTimeout, "-t", strconv.Itoa(DNSXThreads),
-			"-rl", strconv.Itoa(DNSXRateLimit), "-duc",
-		},
-		Timeout: timeout,
-		Root:    root,
+		Args:          args,
+		Timeout:       timeout,
+		Root:          root,
 	}, nil
 }
 
@@ -214,17 +293,23 @@ func (b *Builder) BuildDNSXResolveBounded(hosts []string, maxHosts int, timeout 
 	if len(clean) > maxHosts {
 		return ExecSpec{}, fmt.Errorf("%d hosts exceed max_hosts limit %d", len(clean), maxHosts)
 	}
+	resolverArgs, err := b.resolverArgs()
+	if err != nil {
+		return ExecSpec{}, err
+	}
+	args := []string{
+		"-l", "-", "-silent", "-json", "-omit-raw", "-a", "-aaaa", "-cname", "-resp",
+		"-retry", strconv.Itoa(DNSXRetry), "-timeout", DNSXQueryTimeout,
+		"-t", strconv.Itoa(DNSXThreads), "-rl", strconv.Itoa(DNSXRateLimit), "-duc",
+	}
+	args = append(args, resolverArgs...)
 	return ExecSpec{
 		Binary:        b.DnsxBin,
 		PinnedBackend: "dnsx",
-		Args: []string{
-			"-l", "-", "-silent", "-json", "-omit-raw", "-a", "-aaaa", "-cname", "-resp",
-			"-retry", strconv.Itoa(DNSXRetry), "-timeout", DNSXQueryTimeout,
-			"-t", strconv.Itoa(DNSXThreads), "-rl", strconv.Itoa(DNSXRateLimit), "-duc",
-		},
-		Stdin:   strings.Join(clean, "\n") + "\n",
-		Timeout: timeout,
-		Root:    b.Root,
+		Args:          args,
+		Stdin:         strings.Join(clean, "\n") + "\n",
+		Timeout:       timeout,
+		Root:          b.Root,
 	}, nil
 }
 

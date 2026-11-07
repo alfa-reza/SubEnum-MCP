@@ -22,6 +22,7 @@ const (
 	EnvSubfinderBin   = "SUBENUM_SUBFINDER_BIN"
 	EnvDnsxBin        = "SUBENUM_DNSX_BIN"
 	EnvAlterxBin      = "SUBENUM_ALTERX_BIN"
+	EnvDnsxResolvers  = "SUBENUM_DNSX_RESOLVERS"
 )
 
 // DefaultRoot is the placeholder scope root applied when no environment
@@ -42,12 +43,13 @@ const (
 )
 
 type ExternalConfig struct {
-	Requested    bool
-	LiveEnabled  bool
-	SubfinderBin string
-	DnsxBin      string
-	AlterxBin    string
-	AuthFile     string
+	Requested     bool
+	LiveEnabled   bool
+	SubfinderBin  string
+	DnsxBin       string
+	AlterxBin     string
+	DnsxResolvers string
+	AuthFile      string
 }
 
 type Config struct {
@@ -83,12 +85,13 @@ func LoadConfig(getenv func(string) string) (*Config, error) {
 		ScopeRoot: root,
 		DataDir:   dataDir,
 		External: ExternalConfig{
-			Requested:    strings.TrimSpace(getenv(EnvExternalEnable)) == "1",
-			LiveEnabled:  strings.TrimSpace(getenv(EnvLiveEnable)) == "1",
-			SubfinderBin: strings.TrimSpace(getenv(EnvSubfinderBin)),
-			DnsxBin:      strings.TrimSpace(getenv(EnvDnsxBin)),
-			AlterxBin:    strings.TrimSpace(getenv(EnvAlterxBin)),
-			AuthFile:     auth,
+			Requested:     strings.TrimSpace(getenv(EnvExternalEnable)) == "1",
+			LiveEnabled:   strings.TrimSpace(getenv(EnvLiveEnable)) == "1",
+			SubfinderBin:  strings.TrimSpace(getenv(EnvSubfinderBin)),
+			DnsxBin:       strings.TrimSpace(getenv(EnvDnsxBin)),
+			AlterxBin:     strings.TrimSpace(getenv(EnvAlterxBin)),
+			DnsxResolvers: strings.TrimSpace(getenv(EnvDnsxResolvers)),
+			AuthFile:      auth,
 		},
 	}
 	return cfg, nil

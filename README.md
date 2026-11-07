@@ -71,6 +71,7 @@ Fixture mode sends no network traffic. stdout contains only MCP framing; applica
 | `SUBENUM_SUBFINDER_BIN` | empty | Absolute path to the pinned Subfinder binary. |
 | `SUBENUM_DNSX_BIN` | empty | Absolute path to the pinned dnsx binary. |
 | `SUBENUM_ALTERX_BIN` | empty | Absolute path to the pinned AlterX binary. |
+| `SUBENUM_DNSX_RESOLVERS` | empty | Optional comma-separated dnsx resolver list (IPv4[:port], optional `tcp:`/`udp:` scheme). Empty keeps dnsx's built-in default resolvers. Useful when public UDP DNS is blocked and only a local stub resolver (e.g. `127.0.0.53`) is reachable. |
 
 Tool input is structured: there are no parameters for commands, shells, binary paths, custom wordlists, resolvers, or arbitrary CLI flags. `timeout_seconds` defaults to 120 seconds and is capped at 300 seconds. Rate, threads, retries, DNS timeout, and backend options are set by the server.
 
