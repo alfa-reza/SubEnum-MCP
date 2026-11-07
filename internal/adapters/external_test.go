@@ -377,3 +377,73 @@ func TestDurationFromSecondsHardCap(t *testing.T) {
 		t.Fatal("timeout above cap accepted")
 	}
 }
+
+func TestResolveSalvagesPartialOutputOnTimeout(t *testing.T) {
+	stdout := []byte("{\"host\":\"www." + testRoot + "\",\"a\":[\"192.0.2.10\"],\"status_code\":\"NOERROR\"}\n{\"host\":\"api." + testRoot + "\",\"status_code\":\"NXDOMAIN\"}\n")
+	ext, _ := testExternal(t, func(ExecSpec) ([]byte, []byte, error) {
+		return stdout, nil, context.DeadlineExceeded
+	})
+	records, err := ext.Resolve(context.Background(), backend.ResolveRequest{
+		RunID: "run", Root: testRoot,
+		Hosts:    []string{"www." + testRoot, "api." + testRoot, "mail." + testRoot},
+		MaxHosts: 10, Timeout: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("expected partial results on timeout, got err=%v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records = %+v", records)
+	}
+	byHost := map[string]*model.Record{}
+	for _, r := range records {
+		byHost[r.Host] = r
+	}
+	if byHost["www."+testRoot].Status != model.StatusResolved {
+		t.Fatalf("www status=%s", byHost["www."+testRoot].Status)
+	}
+	if byHost["api."+testRoot].Status != model.StatusNoAnswer || !strings.Contains(byHost["api."+testRoot].Notes, "NXDOMAIN") {
+		t.Fatalf("api nx=%+v", byHost["api."+testRoot])
+	}
+	if byHost["mail."+testRoot].Status != model.StatusTimeout {
+		t.Fatalf("mail status=%s note=%q", byHost["mail."+testRoot].Status, byHost["mail."+testRoot].Notes)
+	}
+}
+
+func TestBruteforceSalvagesPartialOutputOnTimeout(t *testing.T) {
+	stdout := []byte("{\"host\":\"api." + testRoot + "\",\"a\":[\"192.0.2.10\"],\"status_code\":\"NOERROR\"}\n")
+	ext, _ := testExternal(t, func(ExecSpec) ([]byte, []byte, error) {
+		return stdout, nil, context.DeadlineExceeded
+	})
+	records, err := ext.Bruteforce(context.Background(), backend.BruteforceRequest{
+		RunID: "run", Root: testRoot, Preset: "preset-small", MaxWords: 2,
+		Words: []string{"api", "www"}, WordlistPath: "/managed/wordlist.txt", Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("expected partial results on timeout, got err=%v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records=%+v", records)
+	}
+	if records[0].Status != model.StatusResolved || records[1].Status != model.StatusTimeout {
+		t.Fatalf("statuses=%s,%s notes=%q,%q", records[0].Status, records[1].Status, records[0].Notes, records[1].Notes)
+	}
+}
+
+func TestDNSXStatusCodeMapping(t *testing.T) {
+	sc, err := scope.New(testRoot, scope.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs, err := parseDNSXObservations([]byte("{\"host\":\"api."+testRoot+"\",\"status_code\":\"NXDOMAIN\"}\n"), sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := obs["api."+testRoot]
+	if !ok || r.StatusCode != "NXDOMAIN" {
+		t.Fatalf("obs=%+v", obs)
+	}
+	st, note := dnsxStatusFromObservation(r, false)
+	if st != model.StatusNoAnswer || !strings.Contains(note, "NXDOMAIN") {
+		t.Fatalf("status=%s note=%q", st, note)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -233,28 +234,40 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 	if err != nil {
 		return nil, err
 	}
-	stdout, _, err := e.runner.Run(ctx, spec)
-	if err != nil {
-		return nil, err
+	stdout, _, runErr := e.runner.Run(ctx, spec)
+	timedOut := runErr != nil && (errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded))
+	observations, parseErr := parseDNSXObservations(stdout, e.scope)
+	if parseErr != nil && timedOut {
+		observations, parseErr = parseDNSXObservations(trimTrailingPartialLine(stdout), e.scope)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if parseErr != nil {
+		if runErr != nil {
+			return nil, fmt.Errorf("%w (and output parse failed: %v)", runErr, parseErr)
+		}
+		return nil, parseErr
 	}
-	resolved, err := parseDNSXRecords(stdout, e.scope)
-	if err != nil {
+	if runErr != nil && !timedOut {
+		return nil, runErr
+	}
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
 
 	records := make([]*model.Record, 0, len(words))
 	for _, word := range words {
 		host := word + "." + e.scope.Root()
-		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
-		if _, ok := resolved[host]; ok {
-			status, note = model.StatusResolved, "DNS response observed"
+		if obs, ok := observations[host]; ok {
+			status, note := dnsxStatusFromObservation(obs, len(obs.Records) > 0)
+			record := externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note)
+			record.ObservedDNSRecords = obs.Records
+			records = append(records, record)
+			continue
 		}
-		record := externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note)
-		record.ObservedDNSRecords = resolved[host]
-		records = append(records, record)
+		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
+		if timedOut {
+			status, note = model.StatusTimeout, "backend timed out before a response was observed for this host; retry with a smaller max_words or larger timeout_seconds"
+		}
+		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodBruteforce, note))
 	}
 	return records, nil
 }
@@ -286,29 +299,52 @@ func (e *ExternalBackends) Resolve(ctx context.Context, req backend.ResolveReque
 	if err != nil {
 		return nil, err
 	}
-	stdout, _, err := e.runner.Run(ctx, spec)
-	if err != nil {
-		return nil, err
+	stdout, _, runErr := e.runner.Run(ctx, spec)
+	timedOut := runErr != nil && (errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded))
+	observations, parseErr := parseDNSXObservations(stdout, e.scope)
+	if parseErr != nil && timedOut {
+		observations, parseErr = parseDNSXObservations(trimTrailingPartialLine(stdout), e.scope)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if parseErr != nil {
+		if runErr != nil {
+			return nil, fmt.Errorf("%w (and output parse failed: %v)", runErr, parseErr)
+		}
+		return nil, parseErr
 	}
-	resolved, err := parseDNSXRecords(stdout, e.scope)
-	if err != nil {
+	if runErr != nil && !timedOut {
+		return nil, runErr
+	}
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
 
 	records := make([]*model.Record, 0, len(hosts))
 	for _, host := range hosts {
-		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
-		if _, ok := resolved[host]; ok {
-			status, note = model.StatusResolved, "DNS response observed"
+		if obs, ok := observations[host]; ok {
+			status, note := dnsxStatusFromObservation(obs, len(obs.Records) > 0)
+			record := externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note)
+			record.ObservedDNSRecords = obs.Records
+			records = append(records, record)
+			continue
 		}
-		record := externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note)
-		record.ObservedDNSRecords = resolved[host]
-		records = append(records, record)
+		status, note := model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
+		if timedOut {
+			status, note = model.StatusTimeout, "backend timed out before a response was observed for this host; retry with host_offset/host_limit or a larger timeout_seconds"
+		}
+		records = append(records, externalRecord(req.RunID, host, status, "dnsx", model.MethodResolve, note))
 	}
 	return records, nil
+}
+
+func trimTrailingPartialLine(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	i := bytes.LastIndexByte(b, '\n')
+	if i < 0 {
+		return nil
+	}
+	return b[:i+1]
 }
 
 // ParseExternalNames accepts plain hostname lines or JSONL objects containing
@@ -358,22 +394,27 @@ func ParseExternalNames(stdout []byte, configuredScope *scope.Scope) ([]string, 
 	return out, nil
 }
 
+type dnsxResult struct {
+	Records    model.DNSRecords
+	StatusCode string
+}
+
 // ParseDNSXNames validates every non-empty dnsx JSONL row. A malformed or
 // incomplete row is an execution error, not evidence that a host had no answer.
 func ParseDNSXNames(stdout []byte, configuredScope *scope.Scope) ([]string, error) {
-	records, err := parseDNSXRecords(stdout, configuredScope)
+	results, err := parseDNSXObservations(stdout, configuredScope)
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(records))
-	for host := range records {
+	names := make([]string, 0, len(results))
+	for host := range results {
 		names = append(names, host)
 	}
 	sort.Strings(names)
 	return names, nil
 }
 
-func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]model.DNSRecords, error) {
+func parseDNSXObservations(stdout []byte, configuredScope *scope.Scope) (map[string]dnsxResult, error) {
 	if configuredScope == nil {
 		return nil, fmt.Errorf("configured scope is required to parse dnsx output")
 	}
@@ -381,32 +422,40 @@ func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]m
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]model.DNSRecords{}
+	out := map[string]dnsxResult{}
 	for line := 1; scanner.Scan(); line++ {
 		if strings.TrimSpace(scanner.Text()) == "" {
 			continue
 		}
-		var result struct {
-			Host  string   `json:"host"`
-			A     []string `json:"a"`
-			AAAA  []string `json:"aaaa"`
-			CNAME []string `json:"cname"`
+		var row struct {
+			Host       string   `json:"host"`
+			A          []string `json:"a"`
+			AAAA       []string `json:"aaaa"`
+			CNAME      []string `json:"cname"`
+			StatusCode string   `json:"status_code"`
+			Error      string   `json:"error"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			return nil, fmt.Errorf("dnsx output line %d is not valid JSON: %w", line, err)
 		}
-		if strings.TrimSpace(result.Host) == "" {
+		if strings.TrimSpace(row.Host) == "" {
 			return nil, fmt.Errorf("dnsx output line %d is missing a host field", line)
 		}
-		classified := configuredScope.Classify(result.Host)
+		classified := configuredScope.Classify(row.Host)
 		if !classified.InScope {
 			continue
 		}
-		records := out[classified.Normalized]
-		if records == nil {
-			records = model.DNSRecords{}
+		res := out[classified.Normalized]
+		if res.Records == nil {
+			res.Records = model.DNSRecords{}
 		}
-		for typ, vals := range map[string][]string{"A": result.A, "AAAA": result.AAAA, "CNAME": result.CNAME} {
+		if row.StatusCode != "" {
+			res.StatusCode = row.StatusCode
+		}
+		if row.Error != "" && res.StatusCode == "" {
+			res.StatusCode = "ERROR"
+		}
+		for typ, vals := range map[string][]string{"A": row.A, "AAAA": row.AAAA, "CNAME": row.CNAME} {
 			for _, value := range vals {
 				valid := false
 				if typ == "CNAME" {
@@ -419,17 +468,51 @@ func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]m
 				}
 			}
 			if len(vals) > 0 {
-				records[typ] = model.UnionStrings(records[typ], vals)
+				res.Records[typ] = model.UnionStrings(res.Records[typ], vals)
 			}
 		}
-		if len(records) > 0 {
-			out[classified.Normalized] = records
-		}
+		out[classified.Normalized] = res
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read dnsx output: %w", err)
 	}
 	return out, nil
+}
+
+// parseDNSXRecords is kept for compatibility with internal tests/callers that
+// only need positive answer records.
+func parseDNSXRecords(stdout []byte, configuredScope *scope.Scope) (map[string]model.DNSRecords, error) {
+	obs, err := parseDNSXObservations(stdout, configuredScope)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]model.DNSRecords{}
+	for host, r := range obs {
+		if len(r.Records) > 0 {
+			out[host] = r.Records
+		}
+	}
+	return out, nil
+}
+
+func dnsxStatusFromObservation(obs dnsxResult, hasAnswers bool) (model.Status, string) {
+	if hasAnswers {
+		return model.StatusResolved, "DNS response observed"
+	}
+	switch strings.ToUpper(strings.TrimSpace(obs.StatusCode)) {
+	case "NXDOMAIN":
+		return model.StatusNoAnswer, "NXDOMAIN (authoritative negative response)"
+	case "SERVFAIL", "REFUSED", "NOTIMP", "FORMERR", "ERROR":
+		return model.StatusDNSError, fmt.Sprintf("DNS error/status: %s", obs.StatusCode)
+	case "TIMEOUT":
+		return model.StatusTimeout, "DNS query timed out"
+	case "NOERROR":
+		return model.StatusNoAnswer, "no positive DNS answer observed (NOERROR); no A/AAAA/CNAME answer in response"
+	case "":
+		return model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
+	default:
+		return model.StatusNoAnswer, fmt.Sprintf("no positive DNS answer observed (status %s)", obs.StatusCode)
+	}
 }
 
 func newOutputScanner(stdout []byte, backendName string) (*bufio.Scanner, error) {

@@ -32,6 +32,7 @@ type BruteforceOut struct {
 	StatusCounts map[string]int  `json:"status_counts" jsonschema:"result counts grouped by DNS status"`
 	Records      []*model.Record `json:"records" jsonschema:"stored in-scope records produced by the preset check"`
 	Backend      backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
+	Warning      string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout results; use batching or a larger timeout"`
 }
 
 func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in BruteforceIn) (result *mcp.CallToolResult, output BruteforceOut, retErr error) {
@@ -99,9 +100,14 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, BruteforceOut{}, err
 	}
+	counts := statusCounts(stored)
 	mode := "real"
 	if a.fixtureMode() {
 		mode = "fixture"
+	}
+	warning := ""
+	if counts[string(model.StatusTimeout)] > 0 {
+		warning = fmt.Sprintf("%d host(s) timed out; partial results were kept where available — retry with a smaller max_words or a larger timeout_seconds", counts[string(model.StatusTimeout)])
 	}
 	return nil, BruteforceOut{
 		RunID:        run.ID,
@@ -110,9 +116,10 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 		Fixture:      a.fixtureMode(),
 		Wordlist:     preset,
 		WordsQueried: len(stored),
-		StatusCounts: statusCounts(stored),
+		StatusCounts: counts,
 		Records:      sampleRecords(stored),
 		Backend:      a.backendInfo("dnsx", backend.KindBruteforce),
+		Warning:      warning,
 	}, nil
 }
 
@@ -142,6 +149,7 @@ type ResolveOut struct {
 	HostOffset     int             `json:"host_offset,omitempty" jsonschema:"offset used over stored in-scope hosts when hosts is omitted"`
 	HostBatch      int             `json:"host_batch,omitempty" jsonschema:"stored in-scope hosts selected for this call when hosts is omitted"`
 	HostNextOffset *int            `json:"host_next_offset,omitempty" jsonschema:"next offset over stored in-scope hosts, or null when no hosts remain"`
+	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout results; batch with host_offset/host_limit or increase timeout_seconds"`
 }
 
 func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in ResolveIn) (*mcp.CallToolResult, ResolveOut, error) {
@@ -290,6 +298,9 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 		}
 	}
 	out.Backend = a.backendInfo("dnsx", backend.KindResolver)
+	if out.StatusCounts[string(model.StatusTimeout)] > 0 {
+		out.Warning = fmt.Sprintf("%d host(s) timed out; partial results were kept where available — retry with host_offset/host_limit and/or a larger timeout_seconds", out.StatusCounts[string(model.StatusTimeout)])
+	}
 	return nil, out, nil
 }
 

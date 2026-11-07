@@ -59,9 +59,9 @@ func (ExecRunner) Run(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 	if spec.Timeout <= 0 {
 		spec.Timeout = DefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, spec.Timeout)
+	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
+	cmd := exec.CommandContext(runCtx, spec.Binary, spec.Args...)
 	if spec.IsolateHome {
 		home, err := os.MkdirTemp("", "subenum-alterx-home-*")
 		if err != nil {
@@ -93,6 +93,12 @@ func (ExecRunner) Run(ctx context.Context, spec ExecSpec) (stdout, stderr []byte
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
+		if runCtx.Err() == context.DeadlineExceeded {
+			return out.Bytes(), errBuf.Bytes(), fmt.Errorf("%s timed out after %s; partial output may be available (stderr: %s): %w", spec.PinnedBackend, spec.Timeout, truncate(errBuf.String(), 512), context.DeadlineExceeded)
+		}
+		if ctx.Err() != nil {
+			return out.Bytes(), errBuf.Bytes(), fmt.Errorf("%s interrupted: %w", spec.PinnedBackend, ctx.Err())
+		}
 		return out.Bytes(), errBuf.Bytes(), fmt.Errorf("external %q failed after %s: %w (stderr: %s)", spec.Binary, spec.Timeout, err, truncate(errBuf.String(), 512))
 	}
 	if out.overflow || errBuf.overflow {
