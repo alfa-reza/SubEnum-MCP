@@ -64,7 +64,7 @@ func connectInProcess(t *testing.T, cfg *Config) (*mcp.ClientSession, *App) {
 	if err != nil {
 		t.Fatalf("client connect (initialize handshake): %v", err)
 	}
-	t.Cleanup(func() { _ = app.Store().Close() })
+	t.Cleanup(func() { _ = app.Close() })
 	t.Cleanup(func() { _ = session.Close() })
 	return session, app
 }

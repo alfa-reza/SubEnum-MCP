@@ -24,6 +24,9 @@ type ExportOut struct {
 }
 
 func (a *App) handleExport(ctx context.Context, req *mcp.CallToolRequest, in ExportIn) (*mcp.CallToolResult, ExportOut, error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, ExportOut{}, err
+	}
 	run, err := a.runForRead(in.RunID)
 	if err != nil {
 		return nil, ExportOut{}, err

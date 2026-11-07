@@ -10,11 +10,11 @@ import (
 
 // Register installs all v1.0.0 tools on the MCP server.
 func (a *App) Register(srv *mcp.Server) {
-	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for the configured scope."}, a.handleStartRun)
+	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for a scope. The first call pins this server process to the requested registrable domain; later calls must use the same root or are rejected. Apex is never in scope."}, a.handleStartRun)
 	addPortableTool(srv, &mcp.Tool{
 		Name: "discover_subdomains",
-		Description: "Passive subdomain discovery for the server-configured scope root (SUBENUM_SCOPE_ROOT). " +
-			"Fixture mode is the default and runs in-process with no network. An explicitly enabled external mode uses the pinned passive-only Subfinder binary; it requires SUBENUM_EXTERNAL_ENABLE=1, matching operator authorization, verified binary hashes, and SUBENUM_LIVE_ENABLE=1. " +
+		Description: "Passive subdomain discovery for the scope pinned by start_run (optionally pre-pinned with SUBENUM_SCOPE_ROOT). " +
+			"Call start_run first. Fixture mode is the default and runs in-process with no network. An explicitly enabled external mode uses the pinned passive-only Subfinder binary; it requires SUBENUM_EXTERNAL_ENABLE=1, matching operator authorization, verified binary hashes (auto-discovered from the managed dir or SUBENUM_SUBFINDER_BIN), and SUBENUM_LIVE_ENABLE=1. " +
 			"Structured max_records/timeout_seconds are hard-capped; model-provided flags and roots are not accepted. Apex is never in scope.",
 	}, a.handleDiscover)
 
@@ -27,14 +27,15 @@ func (a *App) Register(srv *mcp.Server) {
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "bruteforce_subdomains",
-		Description: "Check only a registered preset wordlist against the configured scope using the fixture backend by default. " +
-			"External mode uses the pinned dnsx binary and requires the external gate plus SUBENUM_LIVE_ENABLE=1; the wordlist is server-owned and bounded. " +
+		Description: "Check only a registered preset wordlist against the pinned scope using the fixture backend by default. " +
+			"External mode uses the pinned dnsx binary (auto-discovered or SUBENUM_DNSX_BIN) and requires the external gate plus SUBENUM_LIVE_ENABLE=1; the wordlist is server-owned and bounded. " +
 			"Absent answers are no_answer, never a conclusion of NXDOMAIN.",
 	}, a.handleBruteforce)
 
 	addPortableTool(srv, &mcp.Tool{
 		Name: "resolve_hosts",
 		Description: "Resolve in-scope subdomains using the fixture backend by default. External mode uses pinned dnsx with a fixed rate, thread count, retry count and query timeout; it requires SUBENUM_LIVE_ENABLE=1. " +
+			"For large batches set timeout_seconds explicitly (up to 300) and paginate with host_offset/host_limit. " +
 			"Out-of-scope/malformed inputs are rejected before a backend call; empty answers become no_answer, never NXDOMAIN.",
 	}, a.handleResolve)
 

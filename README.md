@@ -4,7 +4,7 @@ An stdio-based MCP (Model Context Protocol) server for enumerating subdomain nam
 
 ## What it does and its limits
 
-v1.0.0 collects subdomain names through passive discovery, local candidate generation, bounded DNS wordlist brute-force, and DNS A/AAAA/CNAME resolution. The root is read from `SUBENUM_SCOPE_ROOT` when the server starts and cannot be changed through tool input. It must be a registrable domain, not a public suffix. Only names within the `.<root>` label boundary are in scope; the apex/root itself is excluded. For example, `api.example.com` is under `example.com`, while `example.com` is not.
+v1.0.0 collects subdomain names through passive discovery, local candidate generation, bounded DNS wordlist brute-force, and DNS A/AAAA/CNAME resolution. The process binds to exactly one registrable-domain root: the first `start_run` call made by the agent pins it (`scope_root` tool input, for example `"bmkg.go.id"`), and the pin cannot be changed afterwards except by restarting the server. For CI or fixed deployments, `SUBENUM_SCOPE_ROOT` may optionally pre-pin the same root at process start. It must be a registrable domain, not a public suffix. Only names within the `.<root>` label boundary are in scope; the apex/root itself is excluded. For example, `api.example.com` is under `example.com`, while `example.com` is not.
 
 HTTP/HTTPS/TLS are not part of v1.0.0 and remain on the v2.0.0 roadmap. v1.0.0 also does not include port scanning, crawling, takeover, vulnerability checks, AXFR, reverse DNS, DNSSEC walking, monitoring, or features outside subdomain-name enumeration. An empty DNS response is stored as `no_answer`, not treated as an NXDOMAIN conclusion. Real DNS results retain A, AAAA and CNAME values separately from fixture data. A CNAME target is response data, not authorization to scan that target.
 
@@ -22,6 +22,8 @@ Subfinder and dnsx require a second opt-in, `SUBENUM_LIVE_ENABLE=1`, before send
 
 External backend mode is supported on Linux amd64. The server checks the SHA-256 of each extracted binary against its pinned value before opening the external gate and again before each subprocess call. It does not download or update binaries. The `-duc` flag disables the backends' automatic update check.
 
+The server auto-discovers the three binaries in the managed directory `~/.local/share/subenum-mcp/bin/` (or `$XDG_DATA_HOME/subenum-mcp/bin/`): `subfinder`, `dnsx`, `alterx`. A file must exist there and match the compiled pins; verification happens regardless of where the binary came from. `SUBENUM_SUBFINDER_BIN`, `SUBENUM_DNSX_BIN` and `SUBENUM_ALTERX_BIN` override the managed directory with explicit absolute paths when a different location is required.
+
 | Backend | Version | License | SHA-256 of linux/amd64 archive |
 |---|---|---|---|
 | Subfinder | v2.17.0 | MIT | `a39c3e5c7a26ef3c430915c4d6cbf7716a00f26769a75e9405aba796142eba37` |
@@ -32,7 +34,7 @@ References: [Subfinder release](https://github.com/projectdiscovery/subfinder/re
 
 ### Operator authorization
 
-Set `SUBENUM_EXTERNAL_AUTH` to the absolute path of a JSON file containing `authorized`, `operator`, `scope_root`, and `acknowledgement`. The file must be a regular, non-symlink file with mode `0600`, no larger than 1 MiB, and its `scope_root` must match `SUBENUM_SCOPE_ROOT` exactly. The authorization file and its parent directory are part of the operator's trust boundary; a local process running under the same OS account may be able to modify them.
+Set `SUBENUM_EXTERNAL_AUTH` to the absolute path of a JSON file containing `authorized`, `operator`, `scope_root`, and `acknowledgement`. The file defaults to `<data_dir>/external-authorization.json` (`~/.local/share/subenum-mcp/data/external-authorization.json` by default), so most setups need no override. The file must be a regular, non-symlink file with mode `0600`, no larger than 1 MiB, and its `scope_root` must match the pinned scope exactly. The authorization file and its parent directory are part of the operator's trust boundary; a local process running under the same OS account may be able to modify them.
 
 ```json
 {
@@ -51,27 +53,44 @@ Install the Go toolchain version specified in `go.mod`, then build the server:
 go build -o subenum-mcp ./cmd/subenum-mcp
 ```
 
-Run the stdio server in the default fixture mode:
+Run the stdio server in the default fixture mode — no environment is required:
 
 ```bash
-SUBENUM_SCOPE_ROOT=example.com SUBENUM_DATA_DIR=./data ./subenum-mcp
+./subenum-mcp
+```
+
+The agent then pins the scope through tool input: `start_run` with `scope_root` (for example `"bmkg.go.id"`). A minimal MCP client configuration is all that stays in the client itself:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "subenum-mcp": {
+        "type": "local",
+        "command": ["/path/to/subenum-mcp"]
+      }
+    }
+  }
+}
 ```
 
 Fixture mode sends no network traffic. stdout contains only MCP framing; application logs are written to stderr.
 
 ## Environment variables
 
+Everything is optional; defaults are chosen so the MCP client needs no `environment` block at all.
+
 | Env | Default | Purpose |
 |---|---|---|
-| `SUBENUM_SCOPE_ROOT` | `example.com` | Literal root; only subdomains that pass the suffix boundary are included, and the apex is excluded. |
-| `SUBENUM_DATA_DIR` | `data` (resolved to an absolute path from the working directory) | Storage for runs, exports, and managed work files; must not be reused with a different root. |
+| `SUBENUM_SCOPE_ROOT` | unset | Optional pre-pin of the scope at process start. Normally not set: the agent pins via `start_run` `scope_root` instead. Only subdomains that pass the suffix boundary are included, and the apex is excluded. |
+| `SUBENUM_DATA_DIR` | `~/.local/share/subenum-mcp/data` (XDG: `$XDG_DATA_HOME/subenum-mcp/data`) | Storage for runs, exports, and managed work files; must not be reused with a different root. |
 | `SUBENUM_EXTERNAL_ENABLE` | `0` | Requests external mode; requires matching-scope authorization and all three pinned binaries. |
 | `SUBENUM_LIVE_ENABLE` | `0` | Additional opt-in required before Subfinder or dnsx sends network traffic. Use only when authorized and permitted by applicable service policies. |
-| `SUBENUM_EXTERNAL_AUTH` | `<absolute_data_dir>/external-authorization.json` | Operator authorization file whose scope must match exactly; overrides must be absolute paths. |
-| `SUBENUM_SUBFINDER_BIN` | empty | Absolute path to the pinned Subfinder binary. |
-| `SUBENUM_DNSX_BIN` | empty | Absolute path to the pinned dnsx binary. |
-| `SUBENUM_ALTERX_BIN` | empty | Absolute path to the pinned AlterX binary. |
-| `SUBENUM_DNSX_RESOLVERS` | empty | Optional comma-separated dnsx resolver list (IPv4[:port], optional `tcp:`/`udp:` scheme). Empty keeps dnsx's built-in default resolvers. Useful when public UDP DNS is blocked and only a local stub resolver (e.g. `127.0.0.53`) is reachable. |
+| `SUBENUM_EXTERNAL_AUTH` | `<data_dir>/external-authorization.json` | Operator authorization file whose scope must match exactly; overrides must be absolute paths. |
+| `SUBENUM_SUBFINDER_BIN` | auto-discover `<managed_dir>/bin/subfinder` | Absolute path override for the pinned Subfinder binary. |
+| `SUBENUM_DNSX_BIN` | auto-discover `<managed_dir>/bin/dnsx` | Absolute path override for the pinned dnsx binary. |
+| `SUBENUM_ALTERX_BIN` | auto-discover `<managed_dir>/bin/alterx` | Absolute path override for the pinned AlterX binary. |
+| `SUBENUM_DNSX_RESOLVERS` | nameservers from `/etc/resolv.conf` | Optional comma-separated dnsx resolver list (IPv4[:port], optional `tcp:`/`udp:` scheme). Falls back to dnsx's built-in resolvers if none are readable. Useful when public UDP DNS is blocked and only a local stub resolver (e.g. `127.0.0.53`) is reachable. |
 
 Tool input is structured: there are no parameters for commands, shells, binary paths, custom wordlists, resolvers, or arbitrary CLI flags. `timeout_seconds` defaults to 120 seconds and is capped at 300 seconds. Rate, threads, retries, DNS timeout, and backend options are set by the server.
 
@@ -79,7 +98,7 @@ Tool input is structured: there are no parameters for commands, shells, binary p
 
 | Tool | Purpose | Server limits |
 |---|---|---|
-| `start_run` | Creates a new empty run | Use before switching between fixture and external modes |
+| `start_run` | Creates a new empty run; the first call pins the process to the `scope_root` you pass (registrable domain, for example `"bmkg.go.id"`). Later calls must use the same root. | Requires `scope_root` on the first call; pre-pin with `SUBENUM_SCOPE_ROOT` to skip the pin argument |
 | `discover_subdomains` | Candidates from fixtures or passive Subfinder | `max_records` 1–5,000; timeout `0`/empty uses the 120-second default, otherwise 1–300 seconds; Subfinder rate 5 HTTP requests/second, source timeout 10 seconds, max runtime 5 minutes |
 | `generate_candidates` | Local permutations of in-scope hostnames in a run | Seeds come from stored in-scope hosts and are processed in bounded batches with `seed_offset`/`seed_limit` (1–2,000 per call); `max_candidates` 1–5,000; AlterX output cap 16 MB. |
 | `bruteforce_subdomains` | Checks the registered `preset-small` preset (an empty `wordlist` selects this preset) | `max_words` 1–1,000; external wordlist is created under `<data_dir>/work/` and removed after the call; dnsx uses 10 threads, dnsx `-rl 10` per process (not a global DNS-query cap), one attempt, 3-second query timeout |

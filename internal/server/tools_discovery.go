@@ -29,6 +29,9 @@ type DiscoverOut struct {
 }
 
 func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in DiscoverIn) (*mcp.CallToolResult, DiscoverOut, error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, DiscoverOut{}, err
+	}
 	a.operationMu.Lock()
 	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {
@@ -107,6 +110,9 @@ type GenerateOut struct {
 }
 
 func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolRequest, in GenerateIn) (*mcp.CallToolResult, GenerateOut, error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, GenerateOut{}, err
+	}
 	a.operationMu.Lock()
 	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {

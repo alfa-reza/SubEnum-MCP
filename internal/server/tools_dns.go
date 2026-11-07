@@ -35,6 +35,9 @@ type BruteforceOut struct {
 }
 
 func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in BruteforceIn) (result *mcp.CallToolResult, output BruteforceOut, retErr error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, BruteforceOut{}, err
+	}
 	a.operationMu.Lock()
 	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {
@@ -145,6 +148,9 @@ type ResolveOut struct {
 }
 
 func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in ResolveIn) (*mcp.CallToolResult, ResolveOut, error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, ResolveOut{}, err
+	}
 	a.operationMu.Lock()
 	defer a.operationMu.Unlock()
 	if err := a.validateRunForWrite(in.RunID); err != nil {

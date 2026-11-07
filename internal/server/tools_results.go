@@ -13,13 +13,18 @@ import (
 
 // ---- get_results ----
 
-type StartRunIn struct{}
+type StartRunIn struct {
+	ScopeRoot string `json:"scope_root,omitempty" jsonschema:"registrable domain to enumerate (for example \"bmkg.go.id\"); required on the first call — this process then pins to that root and later calls must use the same root"`
+}
 type StartRunOut struct {
 	RunID string `json:"run_id"`
 	Root  string `json:"root"`
 }
 
 func (a *App) handleStartRun(ctx context.Context, req *mcp.CallToolRequest, in StartRunIn) (*mcp.CallToolResult, StartRunOut, error) {
+	if err := a.pinScope(in.ScopeRoot); err != nil {
+		return nil, StartRunOut{}, err
+	}
 	run, err := a.store.CreateRun()
 	if err != nil {
 		return nil, StartRunOut{}, err
@@ -47,6 +52,9 @@ type ResultsOut struct {
 }
 
 func (a *App) handleGetResults(ctx context.Context, req *mcp.CallToolRequest, in ResultsIn) (*mcp.CallToolResult, ResultsOut, error) {
+	if err := a.ensurePinned(); err != nil {
+		return nil, ResultsOut{}, err
+	}
 	run, err := a.runForRead(in.RunID)
 	if err != nil {
 		return nil, ResultsOut{}, err

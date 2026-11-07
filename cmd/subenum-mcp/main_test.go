@@ -135,9 +135,9 @@ func TestStdioSmokeDefaultFixtureMode(t *testing.T) {
 		t.Fatalf("tools/list: %v", err)
 	}
 	want := map[string]bool{
-		"discover_subdomains": false, "generate_candidates": false, "bruteforce_subdomains": false,
-		"resolve_hosts": false, "get_results": false, "list_backends": false,
-		"doctor": false, "export_results": false,
+		"start_run": false, "discover_subdomains": false, "generate_candidates": false,
+		"bruteforce_subdomains": false, "resolve_hosts": false, "get_results": false,
+		"list_backends": false, "doctor": false, "export_results": false,
 	}
 	for _, tool := range listRes.Tools {
 		if _, ok := want[tool.Name]; ok {
@@ -153,7 +153,24 @@ func TestStdioSmokeDefaultFixtureMode(t *testing.T) {
 		}
 	}
 
-	// tools/call: discover on default placeholder root (fixture output only)
+	// tools/call: start_run pins the process to a scope (fixture-only in this test)
+	sr, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "start_run",
+		Arguments: map[string]any{"scope_root": "example.com"},
+	})
+	if err != nil || sr.IsError {
+		t.Fatalf("tools/call start_run failed: err=%v result=%+v stderr=%s", err, sr, stderr.String())
+	}
+	var srOut struct {
+		RunID string `json:"run_id"`
+		Root  string `json:"root"`
+	}
+	_ = marshalTransform(t, sr.StructuredContent, &srOut)
+	if srOut.RunID == "" || srOut.Root != "example.com" {
+		t.Fatalf("unexpected start_run output: %+v", srOut)
+	}
+
+	// tools/call: discover on the pinned root (fixture output only)
 	disc, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "discover_subdomains",
 		Arguments: map[string]any{},
@@ -293,6 +310,14 @@ func TestStdioSmokeExternalNeverRunsByDefault(t *testing.T) {
 		t.Fatalf("connect failed: %v; stderr:\n%s", err, stderr.String())
 	}
 	defer func() { _ = session.Close() }()
+
+	pin, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "start_run",
+		Arguments: map[string]any{"scope_root": "example.com"},
+	})
+	if err != nil || pin.IsError {
+		t.Fatalf("start_run failed: %v %+v", err, pin)
+	}
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "doctor", Arguments: map[string]any{}})
 	if err != nil || res.IsError {
