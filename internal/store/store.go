@@ -75,11 +75,13 @@ type Run struct {
 	CreatedAt time.Time
 	ScopeRoot string
 
-	mu      sync.Mutex
-	records map[string]*model.Record
-	path    string
-	rel     string
-	root    *os.Root
+	mu          sync.Mutex
+	records     map[string]*model.Record
+	fixtureSeen bool
+	liveSeen    bool
+	path        string
+	rel         string
+	root        *os.Root
 }
 
 type runMetadata struct {
@@ -418,6 +420,13 @@ func (r *Run) loadFile() error {
 				return fmt.Errorf("corrupt record in %s: in-scope host %q is invalid for root %q", r.path, rec.Host, r.ScopeRoot)
 			}
 		}
+		for _, p := range rec.Provenance {
+			if p.Fixture {
+				r.fixtureSeen = true
+			} else {
+				r.liveSeen = true
+			}
+		}
 		r.records[recordKey(&rec)] = &rec
 	}
 	return sc.Err()
@@ -449,6 +458,17 @@ func (r *Run) Upsert(rec *model.Record) (*model.Record, error) {
 	key := recordKey(rec)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	fixture, live := r.fixtureSeen, r.liveSeen
+	for _, p := range rec.Provenance {
+		if p.Fixture {
+			fixture = true
+		} else {
+			live = true
+		}
+	}
+	if fixture && live {
+		return nil, fmt.Errorf("run %s contains observations from a different mode; start a new run", r.ID)
+	}
 	candidate := cloneRecord(rec)
 	if len(r.records) >= MaxRecordsPerRun {
 		if _, exists := r.records[key]; !exists {
@@ -463,6 +483,7 @@ func (r *Run) Upsert(rec *model.Record) (*model.Record, error) {
 		return nil, err
 	}
 	r.records[key] = candidate
+	r.fixtureSeen, r.liveSeen = fixture, live
 	return cloneRecord(candidate), nil
 }
 

@@ -13,6 +13,20 @@ import (
 
 // ---- get_results ----
 
+type StartRunIn struct{}
+type StartRunOut struct {
+	RunID string `json:"run_id"`
+	Root  string `json:"root"`
+}
+
+func (a *App) handleStartRun(ctx context.Context, req *mcp.CallToolRequest, in StartRunIn) (*mcp.CallToolResult, StartRunOut, error) {
+	run, err := a.store.CreateRun()
+	if err != nil {
+		return nil, StartRunOut{}, err
+	}
+	return nil, StartRunOut{RunID: run.ID, Root: a.Root()}, nil
+}
+
 type ResultsIn struct {
 	RunID    string `json:"run_id,omitempty" jsonschema:"run to read; empty uses the latest run"`
 	Status   string `json:"status,omitempty" jsonschema:"optional filter: candidate, resolved, no_answer, timeout or dns_error; empty means all statuses"`

@@ -10,6 +10,7 @@ import (
 
 // Register installs all v1.0.0 tools on the MCP server.
 func (a *App) Register(srv *mcp.Server) {
+	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for the configured scope."}, a.handleStartRun)
 	addPortableTool(srv, &mcp.Tool{
 		Name: "discover_subdomains",
 		Description: "Passive subdomain discovery for the server-configured scope root (SUBENUM_SCOPE_ROOT). " +

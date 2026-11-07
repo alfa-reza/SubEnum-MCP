@@ -4,7 +4,29 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/alfa-reza/SubEnum-MCP/internal/model"
 )
+
+func TestResponseSampleIsBounded(t *testing.T) {
+	records := make([]*model.Record, 25)
+	if got := len(sampleRecords(records)); got != 20 {
+		t.Fatalf("sample has %d records", got)
+	}
+	if got := len(sampleRecords(records[:3])); got != 3 {
+		t.Fatalf("small sample has %d records", got)
+	}
+}
+
+func TestStartRunCreatesDistinctRuns(t *testing.T) {
+	session, _ := connectInProcess(t, testConfig(t, nil))
+	var first, second StartRunOut
+	mustJSON(t, callTool(t, session, "start_run", nil), &first)
+	mustJSON(t, callTool(t, session, "start_run", nil), &second)
+	if first.RunID == "" || second.RunID == "" || first.RunID == second.RunID {
+		t.Fatalf("runs: %+v %+v", first, second)
+	}
+}
 
 func TestPaginationBounds(t *testing.T) {
 	session, _ := connectInProcess(t, testConfig(t, nil))

@@ -72,7 +72,7 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 		Mode:    mode,
 		Fixture: fixture,
 		Count:   len(stored),
-		Records: stored,
+		Records: sampleRecords(stored),
 		Backend: backendInfo,
 	}, nil
 }
@@ -146,7 +146,7 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		Fixture:   fixture,
 		Seeds:     len(seeds),
 		Generated: len(stored),
-		Records:   stored,
+		Records:   sampleRecords(stored),
 		Backend:   backendInfo,
 	}, nil
 }

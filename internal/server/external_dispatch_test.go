@@ -181,7 +181,7 @@ func TestExternalLiveGateBlocksNetworkButAllowsLocalAlterX(t *testing.T) {
 		t.Fatal(err)
 	}
 	seed := model.NewRecord(run.ID, "api."+root, model.StatusCandidate, model.Provenance{
-		Backend: "test", Method: "seed", Detail: "offline seed", Fixture: true,
+		Backend: "test", Method: "seed", Detail: "offline seed", Fixture: false,
 	}, true, "")
 	if _, err := run.Upsert(seed); err != nil {
 		t.Fatal(err)

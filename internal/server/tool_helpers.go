@@ -12,9 +12,17 @@ import (
 )
 
 const (
-	fixtureMode  = "fixture"
-	externalMode = "external"
+	fixtureMode         = "fixture"
+	externalMode        = "external"
+	responseSampleLimit = 20
 )
+
+func sampleRecords(records []*model.Record) []*model.Record {
+	if len(records) > responseSampleLimit {
+		return records[:responseSampleLimit]
+	}
+	return records
+}
 
 // ---- shared helpers ----
 

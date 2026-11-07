@@ -106,7 +106,7 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 		Wordlist:     preset,
 		WordsQueried: len(stored),
 		StatusCounts: statusCounts(stored),
-		Records:      stored,
+		Records:      sampleRecords(stored),
 		Backend:      backendInfo,
 	}, nil
 }
@@ -219,7 +219,7 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 		if err != nil {
 			return nil, ResolveOut{}, err
 		}
-		out.Records = stored
+		out.Records = sampleRecords(stored)
 		out.StatusCounts = statusCounts(stored)
 	} else {
 		out.Records = []*model.Record{}
