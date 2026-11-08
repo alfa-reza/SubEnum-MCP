@@ -13,6 +13,44 @@ import (
 	"github.com/alfa-reza/SubEnum-MCP/internal/model"
 )
 
+func TestResolveOptionalWildcardProbe(t *testing.T) {
+	root := "corp.customer-example.net"
+	cfg := testConfig(t, func(c *Config) {
+		c.ScopeRoot = root
+		c.Fixture = false
+		c.Backend.SubfinderBin = "/fake/subfinder"
+		c.Backend.DnsxBin = "/fake/dnsx"
+		c.Backend.AlterxBin = "/fake/alterx"
+	})
+	session, app := connectInProcess(t, cfg)
+	app.verifyPinnedBinary = func(name, path string) (adapters.PinnedTool, string, error) {
+		return adapters.PinnedTool{Name: name}, "digest", nil
+	}
+	fake := &adapters.FakeRunner{Fn: func(spec adapters.ExecSpec) ([]byte, []byte, error) {
+		hosts := strings.Split(strings.TrimSpace(spec.Stdin), "\n")
+		for _, host := range hosts {
+			if !strings.HasSuffix(host, "."+root) {
+				t.Fatalf("out-of-scope probe: %q", host)
+			}
+		}
+		return []byte(`{"host":"` + hosts[0] + `","a":["192.0.2.1"]}` + "\n"), nil, nil
+	}}
+	var err error
+	app.external, err = adapters.NewExternalBackends(app.scope, app.builder, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out ResolveOut
+	mustJSON(t, callTool(t, session, "resolve_hosts", map[string]any{"hosts": []string{"api." + root}, "check_wildcard": true}), &out)
+	if out.WildcardCheck != "suspected" || fake.CallCount() != 2 {
+		t.Fatalf("unexpected wildcard result: %+v calls=%d", out, fake.CallCount())
+	}
+	mustJSON(t, callTool(t, session, "resolve_hosts", map[string]any{"run_id": out.RunID, "hosts": []string{"api." + root}}), &out)
+	if out.WildcardCheck != "not_checked" || fake.CallCount() != 3 {
+		t.Fatalf("unexpected default wildcard result: %+v calls=%d", out, fake.CallCount())
+	}
+}
+
 func TestResolveHostsRunsInBoundedInternalBatches(t *testing.T) {
 	root := "corp.customer-example.net"
 	cfg := testConfig(t, func(c *Config) {

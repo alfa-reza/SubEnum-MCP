@@ -46,6 +46,7 @@ type DiscoverRequest struct {
 	Root       string
 	MaxRecords int
 	Timeout    time.Duration
+	AllSources bool
 }
 
 type Discoverer interface {
@@ -58,6 +59,7 @@ type CandidateRequest struct {
 	Seeds   []string
 	MaxOut  int
 	Timeout time.Duration
+	Enrich  bool
 }
 
 type CandidateGenerator interface {

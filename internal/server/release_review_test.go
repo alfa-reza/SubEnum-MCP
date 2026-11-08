@@ -18,6 +18,25 @@ type recordingGenerator struct {
 	seeds [][]string
 }
 
+func TestStructuredOptionsAndWildcardFixture(t *testing.T) {
+	session, _ := connectInProcess(t, testConfig(t, nil))
+	var discovery DiscoverOut
+	mustJSON(t, callTool(t, session, "discover_subdomains", map[string]any{"all_sources": true}), &discovery)
+	if !discovery.AllSources || !discovery.Fixture {
+		t.Fatalf("unexpected discovery: %+v", discovery)
+	}
+	var generated GenerateOut
+	mustJSON(t, callTool(t, session, "generate_candidates", map[string]any{"run_id": discovery.RunID, "enrich": true}), &generated)
+	if !generated.Enrich || !generated.Fixture {
+		t.Fatalf("unexpected generation: %+v", generated)
+	}
+	var resolved ResolveOut
+	mustJSON(t, callTool(t, session, "resolve_hosts", map[string]any{"run_id": discovery.RunID, "hosts": []string{"api." + discovery.Root}, "check_wildcard": true}), &resolved)
+	if resolved.WildcardCheck != "not_checked" || !resolved.Fixture {
+		t.Fatalf("fixture wildcard check: %+v", resolved)
+	}
+}
+
 func (g *recordingGenerator) Generate(ctx context.Context, req backend.CandidateRequest) ([]*model.Record, error) {
 	g.seeds = append(g.seeds, append([]string(nil), req.Seeds...))
 	return g.CandidateGenerator.Generate(ctx, req)

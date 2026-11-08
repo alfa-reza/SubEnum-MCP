@@ -81,8 +81,8 @@ Tool input is structured: there are no parameters for commands, shells, binary p
 | Tool | Purpose | Server limits |
 |---|---|---|
 | `start_run` | Creates a new empty run; the first call pins the process to `scope_root`. Later calls must use the same root. | Requires `scope_root` on the first call; `fixture:true` selects explicit labeled test mode. |
-| `discover_subdomains` | Passive subdomain discovery (Subfinder) | `max_records` 1–5,000 (default 100); timeout `0`/empty uses the 120-second default, otherwise 1–300 seconds. |
-| `generate_candidates` | Local permutations of in-scope hostnames (AlterX) | Seeds from stored in-scope hosts, bounded by `seed_offset`/`seed_limit` (1–2,000 per call); use the returned `seed_snapshot` with `seed_next_offset`; `max_candidates` 1–5,000. |
+| `discover_subdomains` | Passive subdomain discovery (Subfinder) | `max_records` 1–5,000 (default 100); optional `all_sources` requests all available sources, potentially increasing requests and duration; timeout `0`/empty uses the 120-second default, otherwise 1–300 seconds. |
+| `generate_candidates` | Local permutations of in-scope hostnames (AlterX) | Seeds from stored in-scope hosts, bounded by `seed_offset`/`seed_limit` (1–2,000 per call); use the returned `seed_snapshot` with `seed_next_offset`; `max_candidates` 1–5,000; optional `enrich` derives extra words from seeds. |
 | `bruteforce_subdomains` | Checks the registered `preset-small` preset (dnsx) | `max_words` 1–1,000; only registered presets accepted; external wordlist is created under `<data_dir>/work/` and removed after the call. |
 | `resolve_hosts` | Resolves in-scope hostnames (dnsx) | Explicit `hosts` input: at most 2,000 elements and 2,000 accepted hosts. Omit `hosts` to resolve stored run hosts in batches with `host_offset`/`host_limit`; `max_hosts` 1–2,000 caps each call. Set `timeout_seconds` (up to 300) for large batches; partial results are kept on timeout. |
 | `get_results` | Paginates results by run and filters by status | `page` minimum 1; `page_size` 1–1,000 (default 100); status limited to the supported enum. |
@@ -100,7 +100,7 @@ Discovery, generation, brute-force and resolution responses include at most 20 r
 
 Runs persist their fixture/real mode at creation. Accessing a run from the other mode is rejected. Legacy runs created before mode persistence adopt this process's mode only while empty; any non-empty legacy run is validated against the recorded provenance on every access. Use a separate data directory for fixture tests and real work. Backend license names are reviewed release metadata, not runtime license-file checks; `license_verified` is false because the server does not perform those checks.
 
-Wildcard DNS detection is limited to the bruteforce canary described above. A `resolved` result can still be a wildcard answer and does not by itself prove that the specific name exists independently; validate important findings separately.
+`resolve_hosts` optionally accepts `check_wildcard: true`, adding three random-label DNS probes directly below the scope root. The response reports the same `wildcard_check` statuses; fixture mode reports `not_checked`. This root-only check does not detect every nested wildcard and does not classify individual answers. A `resolved` result can still be a wildcard answer and does not by itself prove that the specific name exists independently; validate important findings separately. Explicitly authorize the additional DNS queries before enabling the check.
 
 All external output is reclassified against the root; the apex, invalid formats, and non-matching suffixes are discarded. Rejected resolve inputs are recorded as rejected-at-intake and are never sent to a backend, included in pagination, or exported. Each run's data is bound to the root used when it was created.
 

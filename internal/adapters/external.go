@@ -62,6 +62,12 @@ func (e *ExternalBackends) validateRoot(root string) error {
 	return nil
 }
 
+// CheckWildcard probes only random labels directly under the configured root.
+// A negative or failed probe cannot exclude wildcards at nested names.
+func (e *ExternalBackends) CheckWildcard(ctx context.Context) string {
+	return e.canaryWildcard(ctx)
+}
+
 func (e *ExternalBackends) Discover(ctx context.Context, req backend.DiscoverRequest) ([]*model.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -75,6 +81,9 @@ func (e *ExternalBackends) Discover(ctx context.Context, req backend.DiscoverReq
 	spec, err := e.builder.BuildSubfinderDiscoverBounded(scope.DefaultPolicy(), req.MaxRecords, req.Timeout)
 	if err != nil {
 		return nil, err
+	}
+	if req.AllSources {
+		spec.Args = append(spec.Args, "-all")
 	}
 	stdout, _, err := e.runner.Run(ctx, spec)
 	if err != nil {
@@ -169,6 +178,9 @@ func (e *ExternalBackends) Generate(ctx context.Context, req backend.CandidateRe
 	spec, err := e.builder.BuildAlterXCandidatesBounded(seeds, req.MaxOut, req.Timeout)
 	if err != nil {
 		return nil, err
+	}
+	if req.Enrich {
+		spec.Args = append(spec.Args, "-en")
 	}
 	stdout, _, err := e.runner.Run(ctx, spec)
 	if err != nil {

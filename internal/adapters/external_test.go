@@ -54,6 +54,32 @@ func testExternal(t *testing.T, fn func(ExecSpec) ([]byte, []byte, error)) (*Ext
 	return ext, fake
 }
 
+func TestStructuredDiscoveryAndEnrichmentOptions(t *testing.T) {
+	ext, fake := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) { return nil, nil, nil })
+	for _, enabled := range []bool{false, true} {
+		_, err := ext.Discover(context.Background(), backend.DiscoverRequest{Root: testRoot, MaxRecords: 10, AllSources: enabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ext.Generate(context.Background(), backend.CandidateRequest{Root: testRoot, Seeds: []string{"api." + testRoot}, MaxOut: 10, Enrich: enabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discover, generate := fake.Calls[len(fake.Calls)-2], fake.Calls[len(fake.Calls)-1]
+		has := func(args []string, flag string) bool {
+			for _, arg := range args {
+				if arg == flag {
+					return true
+				}
+			}
+			return false
+		}
+		if has(discover.Args, "-all") != enabled || has(generate.Args, "-en") != enabled {
+			t.Fatalf("enabled=%v discovery=%v generate=%v", enabled, discover.Args, generate.Args)
+		}
+	}
+}
+
 func TestExternalDiscoverIsPassiveBoundedAndScopeFiltered(t *testing.T) {
 	stdout := []byte("{\"host\":\"api." + testRoot + "\"}\n" +
 		"{\"host\":\"" + testRoot + "\"}\n" +

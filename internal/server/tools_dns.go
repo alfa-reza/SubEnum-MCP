@@ -134,6 +134,7 @@ type ResolveIn struct {
 	HostOffset     *int     `json:"host_offset,omitempty" jsonschema:"0-based offset over stored in-scope hosts when hosts is omitted; minimum 0"`
 	HostLimit      *int     `json:"host_limit,omitempty" jsonschema:"batch size over stored in-scope hosts when hosts is omitted, 1–2000; defaults to max_hosts"`
 	TimeoutSeconds *int     `json:"timeout_seconds,omitempty" jsonschema:"0 or omitted uses the 120-second default; otherwise 1–300 seconds"`
+	CheckWildcard  bool     `json:"check_wildcard,omitempty" jsonschema:"also probe three random labels directly under the scope root; requires authorization for extra DNS queries and does not test nested wildcards"`
 }
 
 type ResolveOut struct {
@@ -153,6 +154,7 @@ type ResolveOut struct {
 	HostNextOffset *int            `json:"host_next_offset,omitempty" jsonschema:"next offset over stored in-scope hosts, or null when no hosts remain"`
 	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"per-batch timeout applied; batches of up to 500 hosts are run sequentially with progress notifications"`
 	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeout or suspected wildcard results; batch with host_offset/host_limit or increase timeout_seconds"`
+	WildcardCheck  string          `json:"wildcard_check" jsonschema:"root-only canary result: suspected, no_canary_answer, unknown, or not_checked; no_canary_answer does not rule out wildcards"`
 }
 
 func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in ResolveIn) (*mcp.CallToolResult, ResolveOut, error) {
@@ -179,7 +181,7 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 	if a.fixtureMode() {
 		mode = "fixture"
 	}
-	out := ResolveOut{Root: a.Root(), Mode: mode, Fixture: a.fixtureMode(), Dropped: []DroppedInput{}}
+	out := ResolveOut{Root: a.Root(), Mode: mode, Fixture: a.fixtureMode(), Dropped: []DroppedInput{}, WildcardCheck: "not_checked"}
 
 	var hosts []string
 	var run *store.Run
@@ -265,6 +267,9 @@ func (a *App) handleResolve(ctx context.Context, req *mcp.CallToolRequest, in Re
 	if len(hosts) > 0 {
 		if err := a.resolveInChunks(ctx, req, run, hosts, maxHosts, timeout, &out); err != nil {
 			return nil, ResolveOut{}, err
+		}
+		if in.CheckWildcard && !a.fixtureMode() {
+			out.WildcardCheck = a.external.CheckWildcard(ctx)
 		}
 	} else {
 		out.Records = []*model.Record{}

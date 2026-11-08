@@ -18,6 +18,7 @@ type DiscoverIn struct {
 	RunID          string `json:"run_id,omitempty" jsonschema:"run to append to; empty uses the latest run, or starts one when none exists"`
 	MaxRecords     *int   `json:"max_records,omitempty" jsonschema:"positive cap on records per call, 1–5000; default 100; this is an output cap, not a network request budget"`
 	TimeoutSeconds *int   `json:"timeout_seconds,omitempty" jsonschema:"0 or omitted uses the 120-second default; otherwise 1–300 seconds"`
+	AllSources     bool   `json:"all_sources,omitempty" jsonschema:"request all available passive sources instead of defaults; may increase network requests and duration and does not guarantee completeness"`
 }
 
 type DiscoverOut struct {
@@ -32,6 +33,7 @@ type DiscoverOut struct {
 	Warning        string          `json:"warning,omitempty"`
 	MaxRecords     int             `json:"max_records"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
+	AllSources     bool            `json:"all_sources" jsonschema:"whether all available passive sources were requested; fixture mode remains synthetic"`
 }
 
 func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in DiscoverIn) (*mcp.CallToolResult, DiscoverOut, error) {
@@ -62,9 +64,9 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 	}
 	var records []*model.Record
 	if a.fixtureMode() {
-		records, err = a.disc.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout})
+		records, err = a.disc.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout, AllSources: in.AllSources})
 	} else {
-		records, err = a.external.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout})
+		records, err = a.external.Discover(ctx, backend.DiscoverRequest{RunID: run.ID, Root: a.Root(), MaxRecords: maxRecords, Timeout: timeout, AllSources: in.AllSources})
 	}
 	if err != nil {
 		return nil, DiscoverOut{}, err
@@ -93,6 +95,7 @@ func (a *App) handleDiscover(ctx context.Context, req *mcp.CallToolRequest, in D
 		Warning:        warning,
 		MaxRecords:     maxRecords,
 		TimeoutSeconds: int(timeout.Seconds()),
+		AllSources:     in.AllSources,
 	}, nil
 }
 
@@ -105,6 +108,7 @@ type GenerateIn struct {
 	SeedSnapshot   string `json:"seed_snapshot,omitempty" jsonschema:"snapshot token returned by a previous generation call; required when seed_offset is nonzero"`
 	SeedLimit      *int   `json:"seed_limit,omitempty" jsonschema:"seed batch size over stored in-scope hosts, 1–2000; defaults to 2000"`
 	TimeoutSeconds *int   `json:"timeout_seconds,omitempty" jsonschema:"0 or omitted uses the 120-second default; otherwise 1–300 seconds"`
+	Enrich         bool   `json:"enrich,omitempty" jsonschema:"enrich permutations using words from in-scope seeds; may increase candidate volume, still capped by max_candidates"`
 }
 
 type GenerateOut struct {
@@ -121,6 +125,7 @@ type GenerateOut struct {
 	SeedNextOffset *int            `json:"seed_next_offset,omitempty"`
 	SeedSnapshot   string          `json:"seed_snapshot,omitempty" jsonschema:"process-local snapshot token; reuse with seed_next_offset to avoid shifted seeds"`
 	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"timeout applied to the generation call"`
+	Enrich         bool            `json:"enrich" jsonschema:"whether seed-based enrichment was requested; fixture mode remains synthetic"`
 }
 
 func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolRequest, in GenerateIn) (*mcp.CallToolResult, GenerateOut, error) {
@@ -188,7 +193,7 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		mode = "fixture"
 	}
 	if len(seeds) == 0 {
-		return nil, GenerateOut{RunID: run.ID, Root: a.Root(), Mode: mode, Fixture: a.fixtureMode(), SeedTotal: len(allSeeds), SeedOffset: seedOffset, Records: []*model.Record{}, Backend: a.backendInfo("alterx", backend.KindCandidates)}, nil
+		return nil, GenerateOut{RunID: run.ID, Root: a.Root(), Mode: mode, Fixture: a.fixtureMode(), SeedTotal: len(allSeeds), SeedOffset: seedOffset, Records: []*model.Record{}, Backend: a.backendInfo("alterx", backend.KindCandidates), Enrich: in.Enrich}, nil
 	}
 	if !a.fixtureMode() {
 		if err := a.verifyRealBackends(); err != nil {
@@ -197,9 +202,9 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 	}
 	var records []*model.Record
 	if a.fixtureMode() {
-		records, err = a.gen.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout})
+		records, err = a.gen.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout, Enrich: in.Enrich})
 	} else {
-		records, err = a.external.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout})
+		records, err = a.external.Generate(ctx, backend.CandidateRequest{RunID: run.ID, Root: a.Root(), Seeds: seeds, MaxOut: maxOut, Timeout: timeout, Enrich: in.Enrich})
 	}
 	if err != nil {
 		return nil, GenerateOut{}, err
@@ -243,6 +248,7 @@ func (a *App) handleGenerateCandidates(ctx context.Context, req *mcp.CallToolReq
 		SeedNextOffset: next,
 		SeedSnapshot:   snapshotID,
 		TimeoutSeconds: effectiveTimeoutSeconds(timeout),
+		Enrich:         in.Enrich,
 	}, nil
 }
 
