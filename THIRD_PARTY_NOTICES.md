@@ -4,7 +4,7 @@ This document inventories the licenses of third-party components included in the
 
 ## Go Modules Included in the Binary Dependency Graph
 
-This inventory covers non-standard modules appearing in the executable dependency graph for `./cmd/subenum-mcp` (`go list -deps`), not modules used only by tests or tooling.
+This inventory covers non-standard modules appearing in the executable dependency graph for `./cmd/subenum` (`go list -deps`), not modules used only by tests or tooling.
 
 | Module | Version | Status in `go.mod` | License and official source |
 |---|---:|---|---|

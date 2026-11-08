@@ -35,13 +35,13 @@ References: [Subfinder release](https://github.com/projectdiscovery/subfinder/re
 Install the Go toolchain version specified in `go.mod`, then build the server:
 
 ```bash
-go build -o subenum-mcp ./cmd/subenum-mcp
+go build -o subenum ./cmd/subenum
 ```
 
 Run the stdio server:
 
 ```bash
-./subenum-mcp
+./subenum
 ```
 
 The agent pins the scope through tool input: `start_run` with `scope_root` (for example `"bmkg.go.id"`). A minimal MCP client configuration is:
@@ -52,7 +52,7 @@ The agent pins the scope through tool input: `start_run` with `scope_root` (for 
     "servers": {
       "subenum-mcp": {
         "type": "local",
-        "command": ["/path/to/subenum-mcp"]
+        "command": ["/path/to/subenum"]
       }
     }
   }

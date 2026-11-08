@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 				exitCode = 1
 			}
 		}()
-		bin := filepath.Join(tmp, "subenum-mcp-smoke")
+		bin := filepath.Join(tmp, "subenum")
 		build := exec.Command("go", "build", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		if err != nil {
@@ -84,7 +84,7 @@ func startServer(t *testing.T, args []string, env ...string) *smokeServer {
 	var stderr synchronizedStderr
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start subenum-mcp: %v", err)
+		t.Fatalf("start subenum: %v", err)
 	}
 	cleanup := func() error {
 		_ = stdin.Close()

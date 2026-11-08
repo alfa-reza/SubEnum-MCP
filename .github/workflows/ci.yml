@@ -53,24 +53,24 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            binary: subenum-mcp
-            archive: subenum-mcp-linux-amd64.tar.gz
+            binary: subenum
+            archive: subenum-linux-amd64.tar.gz
           - goos: linux
             goarch: arm64
-            binary: subenum-mcp
-            archive: subenum-mcp-linux-arm64.tar.gz
+            binary: subenum
+            archive: subenum-linux-arm64.tar.gz
           - goos: darwin
             goarch: amd64
-            binary: subenum-mcp
-            archive: subenum-mcp-darwin-amd64.tar.gz
+            binary: subenum
+            archive: subenum-darwin-amd64.tar.gz
           - goos: darwin
             goarch: arm64
-            binary: subenum-mcp
-            archive: subenum-mcp-darwin-arm64.tar.gz
+            binary: subenum
+            archive: subenum-darwin-arm64.tar.gz
           - goos: windows
             goarch: amd64
-            binary: subenum-mcp.exe
-            archive: subenum-mcp-windows-amd64.zip
+            binary: subenum.exe
+            archive: subenum-windows-amd64.zip
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -90,7 +90,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           mkdir -p dist
-          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -trimpath -o "dist/$BINARY_NAME" ./cmd/subenum-mcp
+          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -trimpath -o "dist/$BINARY_NAME" ./cmd/subenum
 
       - name: Package binary and checksum
         env:

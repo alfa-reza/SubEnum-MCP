@@ -1,4 +1,4 @@
-// Command subenum-mcp is a stdio MCP server for v1.0.0 subdomain name
+// Command subenum is a stdio MCP server for v1.0.0 subdomain name
 // enumeration. stdout carries only MCP framing; all logs go to stderr.
 package main
 

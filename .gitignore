@@ -36,6 +36,8 @@ go.work.sum
 data/
 /subenum-mcp
 /subenum-mcp-smoke
+/subenum
+/subenum-smoke
 
 # Editor/IDE
 # .idea/
