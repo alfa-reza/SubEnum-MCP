@@ -34,6 +34,7 @@ type BruteforceOut struct {
 	TimeoutSeconds int             `json:"timeout_seconds" jsonschema:"timeout applied to the preset check"`
 	Backend        backend.Info    `json:"backend" jsonschema:"backend state and execution provenance"`
 	Warning        string          `json:"warning,omitempty" jsonschema:"actionable warning, such as partial timeouts or a suspected wildcard zone"`
+	WildcardCheck  string          `json:"wildcard_check" jsonschema:"not_checked when no canary ran; suspected when a canary answered; no_canary_answer when no positive canary answer was observed (not proof wildcards are absent); unknown when the canary failed"`
 }
 
 func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in BruteforceIn) (result *mcp.CallToolResult, output BruteforceOut, retErr error) {
@@ -86,12 +87,13 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, BruteforceOut{}, err
 	}
 	var records []*model.Record
+	wildcardCheck := "not_checked"
 	if a.fixtureMode() {
 		records, err = a.brute.Bruteforce(ctx, backend.BruteforceRequest{RunID: run.ID, Root: a.Root(), Preset: preset, MaxWords: maxWords, Timeout: timeout})
 	} else {
 		records, err = a.external.Bruteforce(ctx, backend.BruteforceRequest{
 			RunID: run.ID, Root: a.Root(), Preset: preset, MaxWords: maxWords,
-			Words: presetWords(preset), WordlistPath: wordlistPath, Timeout: timeout,
+			Words: presetWords(preset), WordlistPath: wordlistPath, Timeout: timeout, WildcardStatus: &wildcardCheck,
 		})
 	}
 	if err != nil {
@@ -119,6 +121,7 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 		TimeoutSeconds: effectiveTimeoutSeconds(timeout),
 		Backend:        a.backendInfo("dnsx", backend.KindBruteforce),
 		Warning:        warning,
+		WildcardCheck:  wildcardCheck,
 	}, nil
 }
 

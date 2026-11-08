@@ -27,15 +27,16 @@ const (
 // first start_run call; SUBENUM_SCOPE_ROOT may optionally pre-pin.
 const DefaultRoot = "example.com"
 const (
-	CapMaxRecordsPerCall  = 5000
-	CapMaxCandidates      = 5000
-	CapMaxBruteforceWords = 1000
-	CapMaxResolveHosts    = 2000
-	CapMaxSeedHosts       = 2000
-	CapMaxPageSize        = 1000
-	CapDefaultPageSize    = 100
-	CapMaxTimeoutSeconds  = 300
-	DefaultTimeoutSeconds = 120
+	CapMaxRecordsPerCall   = 5000
+	DefaultDiscoverRecords = 100
+	CapMaxCandidates       = 5000
+	CapMaxBruteforceWords  = 1000
+	CapMaxResolveHosts     = 2000
+	CapMaxSeedHosts        = 2000
+	CapMaxPageSize         = 1000
+	CapDefaultPageSize     = 100
+	CapMaxTimeoutSeconds   = 300
+	DefaultTimeoutSeconds  = 120
 )
 
 type BackendConfig struct {

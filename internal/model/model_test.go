@@ -1,9 +1,24 @@
 package model
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
+
+func TestRecordStatusSchemaExplainsEvidence(t *testing.T) {
+	schema, err := jsonschema.ForType(reflect.TypeFor[Record](), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := schema.Properties["status"]
+	if status == nil || !strings.Contains(status.Description, "no_answer is inconclusive") || !strings.Contains(status.Description, "not proof") {
+		t.Fatalf("status schema does not explain evidence limits: %+v", status)
+	}
+}
 
 func TestProvenanceUnionDedupe(t *testing.T) {
 	rec := NewRecord("r1", "api.example.com", StatusCandidate, Provenance{

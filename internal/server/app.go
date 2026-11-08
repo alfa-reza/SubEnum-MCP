@@ -42,6 +42,13 @@ type App struct {
 	runner             adapters.Runner
 	external           *adapters.ExternalBackends
 	verifyPinnedBinary func(name, path string) (adapters.PinnedTool, string, error)
+	seedSnapshots      map[string]seedSnapshot
+	seedSnapshotOrder  []string
+}
+
+type seedSnapshot struct {
+	runID string
+	hosts []string
 }
 
 // pinnedRoot reports the scope this process is bound to, and whether any pin
@@ -306,7 +313,7 @@ func (a *App) BackendInfos() []backend.Info {
 		path := bins[name]
 		info := backend.Info{
 			Name: name, Kind: kind, State: backend.StateReady,
-			Version: pin.Version, License: pin.License, LicenseVerified: pin.License != "",
+			Version: pin.Version, License: pin.License, LicenseVerified: false,
 			BinaryConfigured: strings.TrimSpace(path) != "",
 			Notes:            "real backend; binary integrity verified against compiled release hash before execution",
 		}

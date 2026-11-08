@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,7 +37,11 @@ func (a *App) handleExport(ctx context.Context, req *mcp.CallToolRequest, in Exp
 	format := strings.ToLower(strings.TrimSpace(in.Format))
 	folder := strings.TrimSpace(in.Folder)
 	if folder == "" {
-		folder = "export-" + time.Now().UTC().Format("20060102t150405z")
+		var suffix [8]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, ExportOut{}, fmt.Errorf("generate export folder: %w", err)
+		}
+		folder = "export-" + time.Now().UTC().Format("20060102t150405z") + "-" + hex.EncodeToString(suffix[:])
 	}
 	res, err := a.store.Export(run, format, folder, a.Root())
 	if err != nil {

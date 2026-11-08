@@ -257,10 +257,13 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 	// Wildcard canary: when the preset produced any DNS answer, probe exactly
 	// three random labels. A positive answer means the zone may respond for
 	// anything, so resolved preset results get a wildcard-suspected note.
-	// Canary self-failures are non-fatal: no note, results unchanged.
-	wildcardSuspected := false
+	// Canary self-failures are non-fatal and reported as unknown.
+	wildcardStatus := "not_checked"
 	if anyDNSAnswer(observations) {
-		wildcardSuspected = e.canaryWildcard(ctx)
+		wildcardStatus = e.canaryWildcard(ctx)
+	}
+	if req.WildcardStatus != nil {
+		*req.WildcardStatus = wildcardStatus
 	}
 
 	records := make([]*model.Record, 0, len(words))
@@ -282,7 +285,7 @@ func (e *ExternalBackends) Bruteforce(ctx context.Context, req backend.Bruteforc
 	if timedOut {
 		markCallTimedOut(records)
 	}
-	if wildcardSuspected {
+	if wildcardStatus == "suspected" {
 		for _, record := range records {
 			if record.Status == model.StatusResolved && !strings.Contains(record.Notes, model.NoteWildcardSuspected) {
 				record.Notes = strings.TrimSpace(record.Notes + "; " + model.NoteWildcardSuspected)
@@ -547,7 +550,7 @@ func dnsxStatusFromObservation(obs dnsxResult, hasAnswers bool) (model.Status, s
 	case "":
 		return model.StatusNoAnswer, model.NoteNoAnswerNotNXDOMAIN
 	default:
-		return model.StatusNoAnswer, fmt.Sprintf("no positive DNS answer observed (status %s)", obs.StatusCode)
+		return model.StatusNoAnswer, "no positive DNS answer observed; resolver returned an unrecognized status"
 	}
 }
 
@@ -560,34 +563,39 @@ func anyDNSAnswer(observations map[string]dnsxResult) bool {
 	return false
 }
 
-// canaryWildcard resolves exactly three random non-existent labels in the
-// pinned scope. Any observed record means the zone answers for arbitrary
-// names. Canary failures return false and never change enumeration results.
-func (e *ExternalBackends) canaryWildcard(ctx context.Context) bool {
+// canaryWildcard resolves three random labels under the pinned root. A
+// positive answer suggests a wildcard; failure is reported as unknown. A
+// missing answer is not proof of wildcard absence or resolver health.
+func (e *ExternalBackends) canaryWildcard(ctx context.Context) string {
 	if ctx.Err() != nil {
-		return false
+		return "unknown"
 	}
 	var b [8]byte
 	labels := make([]string, 0, wildcardCanaryLabels)
 	for i := 0; i < wildcardCanaryLabels; i++ {
 		if _, err := rand.Read(b[:]); err != nil {
-			return false
+			return "unknown"
 		}
-		labels = append(labels, "wld-"+hex.EncodeToString(b[:]))
+		labels = append(labels, "wld-"+hex.EncodeToString(b[:])+"."+e.scope.Root())
 	}
 	spec, err := e.builder.BuildDNSXResolveBounded(labels, wildcardCanaryLabels, wildcardCanaryTimeout)
 	if err != nil {
-		return false
+		return "unknown"
 	}
 	stdout, _, err := e.runner.Run(ctx, spec)
 	if err != nil {
-		return false
+		return "unknown"
 	}
 	obs, err := parseDNSXObservations(stdout, e.scope)
 	if err != nil {
-		return false
+		return "unknown"
 	}
-	return anyDNSAnswer(obs)
+	for _, host := range labels {
+		if len(obs[host].Records) > 0 {
+			return "suspected"
+		}
+	}
+	return "no_canary_answer"
 }
 
 const (

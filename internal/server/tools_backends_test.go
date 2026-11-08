@@ -65,6 +65,9 @@ func TestRealBackendsReportMissingBinariesClearly(t *testing.T) {
 	}
 	for _, info := range infos {
 		if info.Name == "subfinder" || info.Name == "dnsx" || info.Name == "alterx" {
+			if info.License == "" || info.LicenseVerified {
+				t.Fatalf("license should be static metadata, not runtime-verified: %+v", info)
+			}
 			if info.State != "unverified" || info.Notes == "" {
 				t.Fatalf("missing binary should be reported clearly: %+v", info)
 			}

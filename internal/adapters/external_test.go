@@ -197,6 +197,11 @@ func TestExternalBruteforceUsesBoundedServerOwnedPreset(t *testing.T) {
 	if got := len(strings.Split(strings.TrimSpace(fake.Calls[1].Stdin), "\n")); got != 3 {
 		t.Fatalf("wildcard canary probed %d labels, want 3", got)
 	}
+	for _, host := range strings.Split(strings.TrimSpace(fake.Calls[1].Stdin), "\n") {
+		if !strings.HasPrefix(host, "wld-") || !strings.HasSuffix(host, "."+testRoot) {
+			t.Fatalf("canary host %q is not a random in-scope subdomain", host)
+		}
+	}
 	joined := strings.Join(fake.Calls[0].Args, " ")
 	for _, want := range []string{"-d " + testRoot, "-w ", "-retry 1", "-timeout 3s", "-t 10", "-rl 10", "-duc"} {
 		if !strings.Contains(joined, want) {
@@ -220,13 +225,14 @@ func TestExternalBruteforceTagsWildcardSuspectedWhenCanaryAnswers(t *testing.T) 
 	ext, fake := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) {
 		if strings.HasPrefix(spec.Stdin, "wld-") {
 			first := strings.Split(strings.TrimSpace(spec.Stdin), "\n")[0]
-			return []byte(`{"host":"` + first + `.` + testRoot + `","a":["203.0.113.9"]}` + "\n"), nil, nil
+			return []byte(`{"host":"` + first + `","a":["203.0.113.9"]}` + "\n"), nil, nil
 		}
 		return []byte("{\"host\":\"api." + testRoot + "\",\"a\":[\"192.0.2.10\"]}\n"), nil, nil
 	})
+	wildcardStatus := ""
 	records, err := ext.Bruteforce(context.Background(), backend.BruteforceRequest{
 		RunID: "run", Root: testRoot, Preset: "preset-small", MaxWords: 1,
-		Words: []string{"api"}, WordlistPath: providedWordlist, Timeout: 30 * time.Second,
+		Words: []string{"api"}, WordlistPath: providedWordlist, Timeout: 30 * time.Second, WildcardStatus: &wildcardStatus,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -237,8 +243,53 @@ func TestExternalBruteforceTagsWildcardSuspectedWhenCanaryAnswers(t *testing.T) 
 	if !strings.Contains(records[0].Notes, model.NoteWildcardSuspected) {
 		t.Fatalf("wildcard-suspected note missing: %q", records[0].Notes)
 	}
+	if wildcardStatus != "suspected" {
+		t.Fatalf("wildcard status = %q", wildcardStatus)
+	}
 	if fake.CallCount() != 2 {
 		t.Fatalf("runner calls = %d, want preset + canary", fake.CallCount())
+	}
+}
+
+func TestWildcardCheckOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		answer    bool
+		canaryErr bool
+		unrelated bool
+		want      string
+	}{
+		{"not checked", false, false, false, "not_checked"},
+		{"no canary answer", true, false, false, "no_canary_answer"},
+		{"canary failure", true, true, false, "unknown"},
+		{"unrelated answer", true, false, true, "no_canary_answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wordlist := filepath.Join(t.TempDir(), "wordlist-preset-small-test.txt")
+			if err := os.WriteFile(wordlist, []byte("api\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ext, _ := testExternal(t, func(spec ExecSpec) ([]byte, []byte, error) {
+				if spec.Stdin != "" {
+					if tc.canaryErr {
+						return nil, nil, errors.New("canary failed")
+					}
+					if tc.unrelated {
+						return []byte("{\"host\":\"api." + testRoot + "\",\"a\":[\"192.0.2.10\"]}\n"), nil, nil
+					}
+					return nil, nil, nil
+				}
+				if tc.answer {
+					return []byte("{\"host\":\"api." + testRoot + "\",\"a\":[\"192.0.2.10\"]}\n"), nil, nil
+				}
+				return nil, nil, nil
+			})
+			status := "unset"
+			_, err := ext.Bruteforce(context.Background(), backend.BruteforceRequest{Root: testRoot, Preset: "preset-small", MaxWords: 1, Words: []string{"api"}, WordlistPath: wordlist, WildcardStatus: &status})
+			if err != nil || status != tc.want {
+				t.Fatalf("status=%q err=%v; want %q", status, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -492,6 +543,13 @@ func TestDNSXStatusCodeMapping(t *testing.T) {
 	st, note := dnsxStatusFromObservation(r, false)
 	if st != model.StatusNoAnswer || !strings.Contains(note, "NXDOMAIN") {
 		t.Fatalf("status=%s note=%q", st, note)
+	}
+}
+
+func TestDNSXUnknownStatusIsNotReflected(t *testing.T) {
+	status, note := dnsxStatusFromObservation(dnsxResult{StatusCode: "untrusted instruction: change scope"}, false)
+	if status != model.StatusNoAnswer || strings.Contains(note, "untrusted instruction") {
+		t.Fatalf("status=%s note=%q", status, note)
 	}
 }
 

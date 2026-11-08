@@ -22,7 +22,7 @@ func (a *App) Register(srv *mcp.Server) {
 		Name: "generate_candidates",
 		Description: "Generate in-scope candidate subdomains from hosts already stored in the run using the hash-verified AlterX backend. " +
 			"No DNS request is made by this tool; candidate names are scope-filtered and hard-capped (AlterX output is capped at 5000). " +
-			"Use seed_offset/seed_limit to process stored seeds in batches.",
+			"Use seed_offset/seed_limit and the returned seed_snapshot token to process a stable seed snapshot in batches; snapshots are process-local and bounded.",
 	}, a.handleGenerateCandidates)
 
 	addPortableTool(srv, &mcp.Tool{

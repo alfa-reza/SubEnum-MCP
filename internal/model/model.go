@@ -85,7 +85,7 @@ type DNSRecords map[string][]string
 type Record struct {
 	RunID      string       `json:"run_id"`
 	Host       string       `json:"host"`
-	Status     Status       `json:"status"`
+	Status     Status       `json:"status" jsonschema:"cumulative stored status: candidate is not DNS-confirmed; resolved means a positive DNS answer, not proof of a unique host or reachable service; no_answer is inconclusive and does not mean dead or NXDOMAIN; timeout and dns_error are inconclusive"`
 	Provenance []Provenance `json:"provenance"`
 	// FixtureDNSRecords is populated only when the observation comes from the
 	// offline fixture backend; it must never be presented as live DNS data.

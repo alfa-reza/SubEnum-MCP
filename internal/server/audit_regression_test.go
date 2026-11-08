@@ -166,7 +166,7 @@ func TestToolSchemasReflectHandlerBoundsAndEnums(t *testing.T) {
 		t.Error("export_results.folder schema has no SafeName-compatible pattern")
 	}
 
-	for _, field := range []string{"words_queried", "records"} {
+	for _, field := range []string{"words_queried", "records", "wildcard_check"} {
 		p := auditToolSchema(t, tools["bruteforce_subdomains"].OutputSchema).Properties[field]
 		if p == nil || strings.TrimSpace(p.Description) == "" {
 			t.Errorf("bruteforce_subdomains output field %q lacks a description", field)
@@ -236,7 +236,7 @@ func TestRealBruteforceUsesManagedTemporaryWordlist(t *testing.T) {
 
 	var out BruteforceOut
 	mustJSON(t, callTool(t, session, "bruteforce_subdomains", map[string]any{"max_words": 2}), &out)
-	if out.WordsQueried != 2 {
+	if out.WordsQueried != 2 || out.WildcardCheck != "no_canary_answer" {
 		t.Fatalf("bruteforce output = %+v", out)
 	}
 	if wordlistPath == "" {

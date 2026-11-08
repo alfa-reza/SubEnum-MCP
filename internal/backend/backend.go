@@ -33,7 +33,7 @@ type Info struct {
 	Version          string `json:"version,omitempty"`
 	VersionVerified  bool   `json:"version_verified"`
 	License          string `json:"license,omitempty"`
-	LicenseVerified  bool   `json:"license_verified"`
+	LicenseVerified  bool   `json:"license_verified" jsonschema:"whether license contents were verified at runtime; false does not imply a license problem"`
 	BinaryConfigured bool   `json:"binary_configured"`
 	BinaryVerified   bool   `json:"binary_verified"`
 	Notes            string `json:"notes,omitempty"`
@@ -67,13 +67,14 @@ type CandidateGenerator interface {
 // BruteforceRequest resolves a preset wordlist against the root. Wordlists
 // come from a fixed preset registry; callers cannot pass arbitrary files.
 type BruteforceRequest struct {
-	RunID        string
-	Root         string
-	Preset       string
-	MaxWords     int
-	Words        []string
-	WordlistPath string
-	Timeout      time.Duration
+	RunID          string
+	Root           string
+	Preset         string
+	MaxWords       int
+	Words          []string
+	WordlistPath   string
+	Timeout        time.Duration
+	WildcardStatus *string
 }
 
 type Bruteforcer interface {
