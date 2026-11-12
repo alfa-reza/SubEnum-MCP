@@ -108,7 +108,7 @@ func TestClassify_IDNAPolicy(t *testing.T) {
 		t.Fatalf("reason = %q, want %q", got.Reason, ReasonNonASCII)
 	}
 
-	// A-label syntax alone does not prove valid Punycode; v1.0.0 rejects it.
+	// A-label syntax alone does not prove valid Punycode; the server rejects it.
 	got = s.Classify("xn--bcher-kva.example.com")
 	if got.InScope || !strings.Contains(got.Reason, "IDNA A-label") {
 		t.Fatalf("punycode hostname should be rejected, got %+v", got)

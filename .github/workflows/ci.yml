@@ -117,7 +117,6 @@ jobs:
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/${{ matrix.archive }}
-          archive: false
           if-no-files-found: error
           retention-days: 14
 

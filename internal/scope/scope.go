@@ -23,7 +23,7 @@ const (
 	ReasonNonASCII   = "non_ascii_rejected_idna_policy"
 )
 
-// Policy is reserved for future validation options. v1.0.0 accepts only ordinary
+// Policy is reserved for future validation options. The server accepts only ordinary
 // ASCII DNS labels; it rejects Unicode and xn-- A-labels because it does not
 // perform full IDNA/Punycode validation.
 type Policy struct{}

@@ -39,7 +39,7 @@ type Info struct {
 	Notes            string `json:"notes,omitempty"`
 }
 
-// DiscoverRequest drives passive enumeration. v1.0.0 only enumerates names; no
+// DiscoverRequest drives passive enumeration. The server only enumerates names; no
 // HTTP, ports, takeover checks or other features are permitted.
 type DiscoverRequest struct {
 	RunID      string

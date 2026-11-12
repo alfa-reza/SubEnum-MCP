@@ -53,7 +53,7 @@ func connectInProcess(t *testing.T, cfg *Config) (*mcp.ClientSession, *App) {
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "subenum-mcp", Version: "1.0.0"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "subenum-mcp", Version: "0.1.0-dev.1"}, nil)
 	app.Register(srv)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()

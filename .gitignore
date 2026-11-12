@@ -39,6 +39,10 @@ data/
 /subenum
 /subenum-smoke
 
+# codebase-memory-mcp local artifacts (never commit)
+.codebase-memory/
+.cbmignore
+
 # Editor/IDE
 # .idea/
 # .vscode/

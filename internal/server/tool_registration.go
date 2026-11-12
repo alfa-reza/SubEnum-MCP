@@ -8,7 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Register installs all v1.0.0 tools on the MCP server.
+// Register installs the tools on the MCP server.
 func (a *App) Register(srv *mcp.Server) {
 	addPortableTool(srv, &mcp.Tool{Name: "start_run", Description: "Create a new empty run for a scope. The first call pins this server process to the requested registrable domain; later calls must use the same root or are rejected. Apex is never in scope. Pass fixture=true only for explicit, clearly labeled offline test mode."}, a.handleStartRun)
 	addPortableTool(srv, &mcp.Tool{
