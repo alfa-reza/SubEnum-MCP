@@ -1,4 +1,4 @@
-// Command subenum is a stdio MCP server for v1.0.0 subdomain name
+// Command subenum is a stdio MCP server for subdomain name
 // enumeration. stdout carries only MCP framing; all logs go to stderr.
 package main
 
@@ -13,7 +13,7 @@ import (
 	"github.com/alfa-reza/SubEnum-MCP/internal/server"
 )
 
-const serverVersion = "1.0.0"
+var serverVersion = "0.1.0-dev.1"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))

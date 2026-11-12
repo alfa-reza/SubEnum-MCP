@@ -1,6 +1,6 @@
 # SubEnum-MCP tool reference
 
-Applies to v1.0.0. Discover live schemas and client-specific tool aliases before calling; pass the retained `run_id` explicitly. The executable is `subenum`; the server alias is client-configured and need not match the executable.
+Applies to v0.1.0-dev.1. Discover live schemas and client-specific tool aliases before calling; pass the retained `run_id` explicitly. The executable is `subenum`; the server alias is client-configured and need not match the executable.
 
 | Tool | Input and limits |
 | --- | --- |

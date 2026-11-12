@@ -427,7 +427,7 @@ func (a *App) Doctor() ([]DoctorCheck, error) {
 	}
 	checks = append(checks, DoctorCheck{
 		Name: "traffic", State: CheckOK,
-		Detail: "v1.0.0 performs name enumeration only; no HTTP/HTTPS/TLS, ports, crawling, takeover checks, AXFR, reverse DNS, DNSSEC walking or monitoring",
+		Detail: "performs name enumeration only; no HTTP/HTTPS/TLS, ports, crawling, takeover checks, AXFR, reverse DNS, DNSSEC walking or monitoring",
 	})
 	return checks, nil
 }

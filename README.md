@@ -1,12 +1,12 @@
-# SubEnum-MCP v1.0.0
+# SubEnum-MCP v0.1.0-dev.1
 
 An stdio-based MCP (Model Context Protocol) server for enumerating subdomain names under a single operator-configured root. Examples in this document use `*.example.com` / `example.com` only as placeholders.
 
 ## What it does and its limits
 
-v1.0.0 collects subdomain names through passive discovery, local candidate generation, bounded DNS wordlist brute-force, and DNS A/AAAA/CNAME resolution. The process binds to exactly one registrable-domain root: the first `start_run` call pins it (`scope_root`, for example `"bmkg.go.id"`), and the pin cannot be changed afterwards except by restarting the server. For CI or fixed deployments, `SUBENUM_SCOPE_ROOT` may optionally pre-pin the same root at process start. Only names within the `.<root>` label boundary are in scope; the apex/root itself is excluded.
+This prerelease collects subdomain names through passive discovery, local candidate generation, bounded DNS wordlist brute-force, and DNS A/AAAA/CNAME resolution. The process binds to exactly one registrable-domain root: the first `start_run` call pins it (`scope_root`, for example `"bmkg.go.id"`), and the pin cannot be changed afterwards except by restarting the server. For CI or fixed deployments, `SUBENUM_SCOPE_ROOT` may optionally pre-pin the same root at process start. Only names within the `.<root>` label boundary are in scope; the apex/root itself is excluded.
 
-HTTP/HTTPS/TLS are not part of v1.0.0 and remain on the v2.0.0 roadmap. v1.0.0 also does not include port scanning, crawling, takeover, vulnerability checks, AXFR, reverse DNS, DNSSEC walking, monitoring, or features outside subdomain-name enumeration. An empty DNS response is stored as `no_answer`; when the resolver reports NXDOMAIN explicitly it is recorded as `no_answer` with an NXDOMAIN note, and resolver errors are reported as `dns_error`/`timeout`. Real DNS results retain A, AAAA and CNAME values separately. A CNAME target is response data, not authorization to scan that target. If a backend times out mid-batch, any partial output is salvaged and unobserved hosts are recorded as `timeout` with an actionable warning.
+HTTP/HTTPS/TLS, port scanning, crawling, takeover, vulnerability checks, AXFR, reverse DNS, DNSSEC walking, and monitoring are not included. Candidate estimation and selection of additional DNS record types are not yet available. An empty DNS response is stored as `no_answer`; when the resolver reports NXDOMAIN explicitly it is recorded as `no_answer` with an NXDOMAIN note, and resolver errors are reported as `dns_error`/`timeout`. Real DNS results retain A, AAAA and CNAME values separately. A CNAME target is response data, not authorization to scan that target. If a backend times out mid-batch, any partial output is salvaged and unobserved hosts are recorded as `timeout` with an actionable warning.
 
 Hostnames are lowercased, whitespace is trimmed, and exactly one trailing dot is removed. DNS label boundaries are checked explicitly. Unicode and `xn--` names are rejected because full IDNA/Punycode validation is not provided.
 
@@ -18,7 +18,7 @@ Hostnames are lowercased, whitespace is trimmed, and exactly one trailing dot is
 
 ### Pinned binaries
 
-External backend binaries are supported on Linux amd64. The server verifies the SHA-256 of each binary against its compiled pin before execution. It does not download or update binaries.
+External backend binaries are supported only on Linux amd64; builds for other platforms support fixture mode, not real enumeration. The server verifies the SHA-256 of each binary against its compiled pin before execution. It does not download or update binaries.
 
 Binaries are auto-discovered in the managed directory `~/.local/share/subenum-mcp/bin/` (or `$XDG_DATA_HOME/subenum-mcp/bin/`): `subfinder`, `dnsx`, `alterx`. `SUBENUM_SUBFINDER_BIN`, `SUBENUM_DNSX_BIN` and `SUBENUM_ALTERX_BIN` override with explicit absolute paths.
 

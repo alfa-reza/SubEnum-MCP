@@ -51,7 +51,7 @@ func ValidateHostname(h string, _ Policy) error {
 	}
 	for _, r := range h {
 		if r > unicode.MaxASCII {
-			return fmt.Errorf("hostname contains non-ASCII character %q; v1.0.0 accepts ASCII DNS names only", string(r))
+			return fmt.Errorf("hostname contains non-ASCII character %q; only ASCII DNS names are accepted", string(r))
 		}
 	}
 	labels := strings.Split(h, ".")
@@ -68,7 +68,7 @@ func validateLabel(label string, leading bool) error {
 		return fmt.Errorf("empty DNS label (consecutive or leading dots are not valid)")
 	}
 	if strings.HasPrefix(label, "xn--") {
-		return fmt.Errorf("IDNA A-label %q rejected because v1.0.0 does not validate Punycode", label)
+		return fmt.Errorf("IDNA A-label %q rejected because Punycode is not validated", label)
 	}
 	if len(label) > MaxLabelLen {
 		return fmt.Errorf("DNS label %q exceeds %d bytes", label, MaxLabelLen)

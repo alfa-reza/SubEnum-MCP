@@ -86,11 +86,15 @@ jobs:
           TARGET_OS: ${{ matrix.goos }}
           TARGET_ARCH: ${{ matrix.goarch }}
           BINARY_NAME: ${{ matrix.binary }}
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
           GOTOOLCHAIN: local
           CGO_ENABLED: '0'
         run: |
           mkdir -p dist
-          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -trimpath -o "dist/$BINARY_NAME" ./cmd/subenum
+          version=0.1.0-dev.1
+          if [[ "$RELEASE_REF_TYPE" == tag && "$RELEASE_REF" == v* ]]; then version="${RELEASE_REF#v}"; fi
+          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -trimpath -ldflags "-X main.serverVersion=$version" -o "dist/$BINARY_NAME" ./cmd/subenum
 
       - name: Package binary and checksum
         env:
@@ -100,10 +104,11 @@ jobs:
           cd dist
           sha256sum "$BINARY_NAME" > SHA256SUMS
           cp ../THIRD_PARTY_NOTICES.md .
+          cp ../LICENSE .
           if [[ "$ARCHIVE_NAME" == *.zip ]]; then
-            zip -q "$ARCHIVE_NAME" "$BINARY_NAME" SHA256SUMS THIRD_PARTY_NOTICES.md
+            zip -q "$ARCHIVE_NAME" "$BINARY_NAME" SHA256SUMS THIRD_PARTY_NOTICES.md LICENSE
           else
-            tar -czf "$ARCHIVE_NAME" "$BINARY_NAME" SHA256SUMS THIRD_PARTY_NOTICES.md
+            tar -czf "$ARCHIVE_NAME" "$BINARY_NAME" SHA256SUMS THIRD_PARTY_NOTICES.md LICENSE
           fi
           test -s "$ARCHIVE_NAME"
 
@@ -141,5 +146,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          options=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then options+=(--prerelease --latest=false); fi
           gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
-            --verify-tag --title "$RELEASE_TAG" --generate-notes
+            --verify-tag --title "$RELEASE_TAG" --generate-notes "${options[@]}"

@@ -51,7 +51,7 @@ func (a *App) handleBruteforce(ctx context.Context, req *mcp.CallToolRequest, in
 		preset = "preset-small"
 	}
 	if _, ok := presetWordlists[preset]; !ok {
-		return nil, BruteforceOut{}, fmt.Errorf("unknown wordlist preset %q; only registered presets are accepted in v1.0.0: %s (arbitrary paths and custom lists are rejected)", preset, presetNames())
+		return nil, BruteforceOut{}, fmt.Errorf("unknown wordlist preset %q; only registered presets are accepted: %s (arbitrary paths and custom lists are rejected)", preset, presetNames())
 	}
 	maxWords, err := clampCap(in.MaxWords, CapMaxBruteforceWords, CapMaxBruteforceWords, "max_words")
 	if err != nil {
